@@ -1,0 +1,15 @@
+{
+  "name": "research-workbench",
+  "version": "0.3.0",
+  "private": true,
+  "description": "个人研究平台：方向阅读路线、分级论文阅读卡、独立 Agent 技术主干、经典书目、每日精选与近期登记发现、本人阅读记录（仅本机）；零运行时依赖",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node --test",
+    "check-links": "node scripts/check-links.mjs"
+  }
+}
