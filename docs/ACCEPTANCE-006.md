@@ -59,6 +59,17 @@
 - **提交内容核对**：暂存清单逐条核对，**不含 `private/`、不含 `.workbuddy/`、不含任何密钥或私人路径**。
 - **未推送、未配置 remote**：`git remote -v` 为空。依据用户选择"先只提交，推送以后再说"，本轮不推送、不部署。
 
+## 11. 公开推送（2026-09-16，用户授权后执行）
+
+用户新建 GitHub 仓库 `https://github.com/Ctrl1CandV/ResearchWorkbench` 并明确授权"清理后提交推送"。执行内容：
+
+- 清理：把本地专用交接文档《research-workbench-kickoff》（自述不随仓库共享、含本地路径）移到本地 `private/archive/`；改写 `docs/CONTENT-001.md` 中遗留的个人绝对路径；确认无密钥、无身份细节（`2026 级/学硕/姓名/邮箱` 等零命中）。
+- 历史重建：推送前的历史含上述文档与路径，且旧版四文件不在历史中（无可丢失内容）；为首次公开推送重建为单一干净提交 `8475246`（47 个文件），旧历史打包为 `private/archive/pre-push-history.bundle` 保存在本地私有目录。
+- 推送：`main` 已推送到 origin（`git push -u origin main`，凭据管理器中已存在的 GitHub 凭据完成认证）；推送后 `git status` 干净，仓库为公开可见（未认证 API 返回 200）。
+- 未推送内容：`private/`、`.grad/`、`.workbuddy/`、个人记录与密钥均被 `.gitignore` 排除，未进入任何提交。
+
+以上为本人（主协调）执行并核对的记录；后续任何改动仍须用户授权后才推送。
+
 ## 6. 用户反馈与条件确认
 
 - 旧版退役前经 `AskUserQuestion` 确认：用户选择"没有笔记或已导出，可以删"（满足 LEGACY-AUDIT-005 条件 D）与"先只提交，推送以后再说"。条件 A（v3 记录）、B（每日精选接通）、C（D3 已执行）已分别由阶段 1、2、3 满足。
