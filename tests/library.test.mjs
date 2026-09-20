@@ -79,7 +79,7 @@ test('真实 LIBRARY 规模：3 方向（9/8/11 步）、45 篇（1 deep + 2 sta
   assert.equal(LIBRARY.technicalRoutes.length, 11);
   assert.equal(coreTechnicalRoutes(LIBRARY).length, 6);
   assert.equal(advancedTechnicalRoutes(LIBRARY).length, 5);
-  assert.equal(LIBRARY.briefs.length, 1);
+  assert.equal(LIBRARY.briefs.length, 4);
   assert.equal(LIBRARY.briefs[0].items.length, 3);
 });
 
@@ -665,7 +665,7 @@ test('libraryStatus 与 EMPTY_NOTICES：空集合必须走明确空态文案', (
   const status = libraryStatus(LIBRARY);
   assert.deepEqual(
     { directions: status.directions, papers: status.papers, technicalRoutes: status.technicalRoutes, briefs: status.briefs },
-    { directions: 3, papers: 45, technicalRoutes: 11, briefs: 1 },
+    { directions: 3, papers: 45, technicalRoutes: 11, briefs: 4 },
   );
   assert.equal(status.allEmpty, false);
   assert.equal(libraryStatus({ directions: [], papers: [], technicalRoutes: [], briefs: [] }).allEmpty, true);
@@ -886,7 +886,7 @@ test('服务：编码/大小写/query 变体与非白名单文件一律 404（�
   }
 });
 
-// ---------- 审查回流回归（docs/REVIEW-PLAN-004.md 待修项 1/2/3/4/5） ----------
+// ---------- 审查回流回归（原 REVIEW-PLAN-004 待修项 1/2/3/4/5，归档见 docs/HISTORY.md） ----------
 
 test('回流项1：目录与正文同源——目录标签来自 sectionTitle 或论文章节标题，quick/entry 不再与正文漂移', () => {
   for (const paper of LIBRARY.papers) {

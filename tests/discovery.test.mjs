@@ -186,7 +186,7 @@ test('固定契约：请求 URL 仅含固定参数，query/filter/sort/order/row
   assert.ok(!url.includes('profile') && !url.includes('note'), '请求不含画像/笔记');
 });
 
-test('三个主题的固定 query 与 CONTENT-002 契约一致', async () => {
+test('三个主题的固定 query 与 SPEC.md 每日发现固定契约一致', async () => {
   assert.equal(TOPICS.agent.query, 'language model tool use');
   assert.equal(TOPICS.rag.query, 'retrieval augmented generation');
   assert.equal(TOPICS.peft.query, 'parameter efficient fine tuning');

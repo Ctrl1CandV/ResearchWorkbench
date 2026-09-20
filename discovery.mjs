@@ -1,5 +1,6 @@
 // discovery.mjs —— 每日发现：Crossref 近期登记查询服务。
-// 契约来源：docs/CONTENT-002.md「每日发现固定契约」、docs/DESIGN-002.md「每日发现」。
+// 契约来源：docs/SPEC.md「每日发现固定契约」（原 CONTENT-002/DESIGN-002 条款，
+// 演进记录见 docs/HISTORY.md）。
 // - 仅允许三个固定公开主题，query 固定，无用户自由文本，不接受任意 URL；
 // - 最近 7 个 UTC 日登记（from-created-date = 今日-6 天，until-created-date = 今日），
 //   sort=created&order=desc&rows=20&select=DOI,title,author,abstract,created,published,container-title；

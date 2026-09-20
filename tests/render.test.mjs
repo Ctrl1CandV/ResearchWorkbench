@@ -433,7 +433,33 @@ test('发现区（DOM）：错误载荷如实显示，不冒充结果', async ()
   assert.ok(!text.includes('A Test Paper'), '不得显示上一次的结果');
 });
 
-// ---------- 9) 方向页 CCF 目录事实（PLAN-005 决策 D3） ----------
+// ---------- 9) 历史工作日索引（每日精选工作流，2026-09-18） ----------
+
+test('简报页（DOM）：历史工作日索引按期列出、标明本期、缺日如实说明', () => {
+  const view = renderAt('#/brief');
+  const text = view.textContent;
+  assert.ok(text.includes('历史工作日'), '缺历史工作日索引');
+  assert.ok(text.includes('2026-09-18（本期）'), '最新一期应标为本期');
+  assert.ok(text.includes('不是自动抓取'), '须说明每日产出靠手动工作流');
+  const hrefs = [];
+  walk(view, (n) => {
+    if (n.tagName === 'A' && n.attributes.href) hrefs.push(n.attributes.href);
+  });
+  assert.ok(hrefs.includes('#/brief/brief-2026-09-15'), '往期日期应链接到对应期');
+  assert.ok(hrefs.includes('#/brief/brief-2026-09-16'), '09-16 补记期应在索引');
+  assert.ok(hrefs.includes('#/brief/brief-2026-09-17'), '09-17 补记期应在索引');
+  // 直达往期：该期标为本期，索引仍在
+  const past = renderAt('#/brief/brief-2026-09-15');
+  const pastText = past.textContent;
+  assert.ok(pastText.includes('2026-09-15 精选'), '往期内容应渲染');
+  assert.ok(pastText.includes('2026-09-15（本期）'), '直达往期时该期应标为本期');
+  assert.ok(pastText.includes('历史工作日'), '往期页也应有索引');
+  // 补记期：如实标明回溯口径
+  const backfill = renderAt('#/brief/brief-2026-09-16');
+  assert.ok(backfill.textContent.includes('回溯补记'), '补记期应写明回溯口径');
+});
+
+// ---------- 10) 方向页 CCF 目录事实（PLAN-005 决策 D3） ----------
 
 test('方向页（DOM）：底部有 CCF 目录事实与来源，标注“不是投稿推荐”', () => {
   const view = renderAt('#/directions');

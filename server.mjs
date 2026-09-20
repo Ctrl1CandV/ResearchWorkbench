@@ -1,7 +1,6 @@
 // server.mjs —— 仅本机服务：静态只读 + 每日发现同源 API。
-// 契约来源：docs/DESIGN-002.md「状态和安全」「每日发现固定契约」、
-// docs/plans/PLAN-003-reading-library.md「实施设计」（阅读工作台静态白名单）、
-// docs/LEGACY-AUDIT-005.md（旧版退役：app/domain/content/legacy 四文件已删除）。
+// 契约来源：docs/SPEC.md「行为规约」「每日发现固定契约」（原 DESIGN-002、
+// PLAN-003、LEGACY-AUDIT-005 的相关条款，演进记录见 docs/HISTORY.md）。
 // - 只绑定 127.0.0.1；端口默认 4173，可用 PORT 环境变量覆盖；端口冲突明确报错，
 //   不结束占用端口的进程。
 // 静态部分：

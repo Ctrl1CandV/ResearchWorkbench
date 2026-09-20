@@ -1,4 +1,5 @@
-// public/library.js —— 个人研究平台（PLAN-004 / DESIGN-005 渲染与契约；PLAN-005 增补）。
+// public/library.js —— 个人研究平台渲染与路由（契约见 docs/SPEC.md、docs/DESIGN.md；
+// 演进记录见 docs/HISTORY.md）。
 // 约束：
 // - 动态文本一律 textContent / createTextNode，禁止 innerHTML 等注入面；
 // - 外部链接必须经 safeExternalHref（仅 https），否则降级为纯文本提示，不产生可点链接；
@@ -2254,12 +2255,13 @@ function renderBrief(container, briefId = null) {
   page.appendChild(crumb([{ text: '首页', href: '#/home' }, { text: '每日精选', href: '#/brief' }]));
   page.appendChild(el('h2', null, '每日精选'));
   page.appendChild(
-    el('p', 'lib-intro', '这里是定向挑选的少量论文，每条写明挑选理由；整理日期与论文发表日期分开标注，旧文精选不会标成当天新论文。'),
+    el('p', 'lib-intro', '这里是工作日更新的定向挑选：每期由每日论文漏斗实际产出，少量论文每条写明挑选理由；整理日期与论文发表日期分开标注，缺日即当日未产出，不补写。'),
   );
   if (LIBRARY.briefs.length === 0) {
     page.appendChild(emptyBox(EMPTY_NOTICES.briefs));
     return;
   }
+  page.appendChild(renderDiscoverSection());
   if (briefId !== null) {
     const brief = getBrief(LIBRARY, briefId);
     if (!brief) {
@@ -2267,23 +2269,37 @@ function renderBrief(container, briefId = null) {
       return;
     }
     page.appendChild(briefPanel(brief));
+    page.appendChild(briefArchive(brief.id));
     return;
   }
-  page.appendChild(renderDiscoverSection());
+  const latest = latestBrief(LIBRARY);
   page.appendChild(el('h3', 'lib-block-title', '选编简报'));
-  page.appendChild(briefPanel(latestBrief(LIBRARY)));
-  if (LIBRARY.briefs.length > 1) {
-    const past = el('p', 'lib-past-briefs');
-    past.appendChild(el('span', 'lib-step-label', '往期：'));
-    [...LIBRARY.briefs]
-      .sort((a, b) => String(b.date).localeCompare(String(a.date)))
-      .slice(1)
-      .forEach((b, i) => {
-        if (i > 0) past.appendChild(document.createTextNode('；'));
-        past.appendChild(link(buildHash('brief', b.id), b.date));
-      });
-    page.appendChild(past);
+  page.appendChild(briefPanel(latest));
+  page.appendChild(briefArchive(latest.id));
+}
+
+// 历史工作日索引：按期列出全部简报并标明当前期；未产出的日期不占位、不补写。
+function briefArchive(currentId) {
+  const box = el('div', 'lib-brief-archive');
+  box.appendChild(el('h3', 'lib-block-title', '历史工作日'));
+  const sorted = [...LIBRARY.briefs].sort((a, b) => String(b.date).localeCompare(String(a.date)));
+  const ul = el('ul', 'lib-list');
+  for (const brief of sorted) {
+    const li = el('li');
+    if (brief.id === currentId) {
+      li.appendChild(el('strong', null, brief.date));
+      li.appendChild(document.createTextNode('（本期）'));
+    } else {
+      li.appendChild(link(buildHash('brief', brief.id), brief.date));
+    }
+    li.appendChild(el('span', 'lib-res-meta', ` · ${brief.items.length} 条`));
+    ul.appendChild(li);
   }
+  box.appendChild(ul);
+  box.appendChild(
+    el('p', 'lib-muted', '仅列出实际产出的工作日；未列出的日期当日没有产出简报。每日产出靠手动运行工作流更新，不是自动抓取。'),
+  );
+  return box;
 }
 
 function renderNotFound(container, rawHash) {

@@ -1,6 +1,6 @@
 # 项目协作约定
 
-这是独立新项目，不是原站原地改版。先读 docs/START-HERE.md、docs/SPEC.md 和当前 PLAN，再做分派与修改。
+这是独立新项目，不是原站原地改版。先读 docs/SPEC.md、docs/BACKLOG.md（需要历史脉络再读 docs/HISTORY.md），再做分派与修改。
 
 ## 长期约束
 
