@@ -184,38 +184,27 @@ body.lib ::selection { background: var(--lib-accent); color: #ffffff; }
   font-size: 12px;
   color: var(--lib-accent-deep);
 }
-.lib-step-flags { margin: 4px 0 0; display: flex; flex-wrap: wrap; gap: 6px; }
-.lib-flag {
-  padding: 1px 8px;
-  border: 1px solid var(--lib-line);
-  border-radius: 3px;
-  font-size: 12px;
-  color: var(--lib-muted);
-}
+/* REWORK-007 §3/§5：路线步骤标记 chip（.lib-step-flags/.lib-flag）已删除，改用纯文本行。 */
 
-/* 纵向步骤：编号即顺序 */
+/* 纵向步骤：编号即顺序（REWORK-007 §5：圆底徽章降为纯文本序号，顺序感靠数字与连接线） */
 .lib-steps { list-style: none; counter-reset: libstep; margin: 12px 0 0; padding: 0; }
-.lib-steps > li { counter-increment: libstep; position: relative; padding: 0 0 18px 34px; }
+.lib-steps > li { counter-increment: libstep; position: relative; padding: 0 0 18px 26px; }
 .lib-steps > li::before {
   content: counter(libstep);
   position: absolute;
   left: 0;
-  top: 1px;
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  background: var(--lib-accent-soft);
-  color: var(--lib-accent-deep);
+  top: 2px;
   font-family: var(--lib-font-ui);
-  font-size: 12px;
-  line-height: 22px;
-  text-align: center;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.5;
+  color: var(--lib-accent-deep);
 }
 .lib-steps > li::after {
   content: "";
   position: absolute;
-  left: 11px;
-  top: 27px;
+  left: 6px;
+  top: 24px;
   bottom: 4px;
   width: 1px;
   background: var(--lib-line);
@@ -251,17 +240,8 @@ body.lib ::selection { background: var(--lib-accent); color: #ffffff; }
   font-size: 13px;
   color: var(--lib-muted);
 }
-.lib-badge {
-  display: inline-block;
-  padding: 1px 8px;
-  border: 1px solid var(--lib-line);
-  border-radius: 3px;
-  font-family: var(--lib-font-ui);
-  font-size: 12px;
-  color: var(--lib-muted);
-}
-.lib-badge-kind { color: var(--lib-accent-deep); border-color: var(--lib-accent); background: var(--lib-accent-soft); }
-.lib-badges { display: flex; flex-wrap: wrap; gap: 6px 8px; margin: 0 0 4px; }
+/* REWORK-007 §3：徽章 chip（.lib-badge/.lib-badge-kind/.lib-badges）已删除——
+   标签一律以 " · " 连接的纯文本 meta 行（.lib-metaline / .lib-depth-note）呈现。 */
 .lib-orig { color: var(--lib-accent); }
 .lib-depth-note { margin: 8px 0 0; font-family: var(--lib-font-ui); font-size: 13px; color: var(--lib-muted); line-height: 1.7; }
 .lib-lead { margin: 0 0 20px; font-size: 17px; line-height: 1.85; }
@@ -386,8 +366,10 @@ body.lib ::selection { background: var(--lib-accent); color: #ffffff; }
 .lib-paper-title a:hover { text-decoration: underline; }
 .lib-paper-lead { margin: 6px 0 0; font-size: 14px; color: var(--lib-muted); line-height: 1.7; }
 
-/* 技术学习 */
+/* 技术学习（REWORK-007 §5：标题链接与论文/步骤标题同一模式——平时不加下划线，悬停才出现） */
 .lib-view .lib-tech-title { margin: 0 0 6px; font-size: 17px; font-weight: 600; font-family: var(--lib-font-ui); }
+.lib-tech-title a { text-decoration: none; }
+.lib-tech-title a:hover { text-decoration: underline; }
 .lib-tech-capability { margin: 0 0 8px; font-size: 15px; line-height: 1.8; }
 .lib-tech-meta { margin: 0 0 6px; font-size: 13px; color: var(--lib-muted); }
 .lib-tech-sep { margin: 0 6px; }

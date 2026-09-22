@@ -7,7 +7,10 @@
 //   scrollIntoView，从不改写 location.hash，避免与 hash 路由冲突；
 // - 本人记录只经 notes.js 读写独立键 research-workbench:v3，绝不读写 v1/v2 旧版记录；
 // - “近期登记发现”仅在用户点击主题时请求同源 /api/discover；动态条目不进入内容库、不写入任何记录；
-// - 内容静态来自 library-content.js；集合为空时显示明确空态；
+// - 内容静态来自 library-content.js（REWORK-007 后由 public/content/ 数据模块聚合）；集合为空时显示明确空态；
+// - 阅读动线优先于功能入口（REWORK-007 §1）：论文页正文在前、"我的记录"在正文之后、"来源与覆盖"收尾；
+//   精选页简报与历史索引在前、"近期登记发现"在后；首页区序按每日回访价值排序（精选→论文→方向→技术→经典）；
+// - 标签不渲染为 chip（REWORK-007 §3）：一律" · "连接的纯文本 meta 行；entry 长句只在论文页页眉完整出现；
 // - 阅读卡按 deliveredDepth 决定结构（deep/standard/quick/entry），recommendedDepth 只表达建议投入；
 //   摘要级不等于精读，入口条目不冒充阅读卡；打开论文或外链不改变任何本人状态。
 
@@ -25,6 +28,13 @@ import {
   setPaperNote,
   setPaperStatus,
 } from './notes.js';
+
+// 渲染数据源：缺省为真实 LIBRARY；测试可用 __setRenderLibrary 换成小型 fixture 库
+// 来验证新材料/论文混合路线与 featured 布局，不影响纯函数与本人记录（记录仍锚定真实库）。
+let renderLibrary = LIBRARY;
+export function __setRenderLibrary(lib) {
+  renderLibrary = lib && typeof lib === 'object' ? lib : LIBRARY;
+}
 
 // ---------- 标签与固定文案 ----------
 
@@ -107,9 +117,11 @@ export const ACCESS_LABELS = Object.freeze({
 export const EMPTY_NOTICES = Object.freeze({
   directions: '方向阅读路线尚未接入：来源核查完成后，每个方向将提供有序阅读路线；当前不提供占位论文。',
   papers: '论文阅读卡尚未接入：通过来源核查并按阅读模板整理后才会显示；本页不编造论文。',
+  materials: '导读材料尚未接入：站内编辑说明与博客导读按实际核查进度上线，不用占位内容凑数。',
   technicalRoutes: '技术学习路线尚未接入：教程需真实可靠来源，并标明先后顺序、核查层次与掌握标准。',
   briefs: '精选简报尚未发布：第一期简报将注明整理日期、来源与覆盖范围，不会用占位内容充数。',
   routeEmpty: '该方向的阅读路线尚未接入；来源核查完成前不提供论文条目，不编造文献。',
+  startRouteEmpty: '起步路线尚未接入：来源核查完成后按「从这里开始」给出有序节点，当前不提供占位内容。',
   learnCore: '必学主干尚未接入：需先核验每条的章节与访问条件，未核验的不混入可开始资源。',
 });
 
@@ -119,6 +131,8 @@ const NAV_ACTIVE_BY_VIEW = Object.freeze({
   route: 'directions',
   papers: 'papers',
   paper: 'papers',
+  // 03 §6：材料详情带路线上下文时归方向导航激活项；独立打开归论文项（渲染层按 ctx 覆盖）。
+  material: 'papers',
   learn: 'learn',
   learnRoute: 'learn',
   brief: 'brief',
@@ -133,7 +147,34 @@ const STEP_LABELS = Object.freeze({
 });
 
 // 阶段标签：合法的 stage 取值；显示顺序由路线实际排列决定（见 routeStages）。
-export const STAGE_ORDER = Object.freeze(['建立问题', '理解方法', '看评价与反例', '核查近期竞争']);
+// SCAFFOLD-008：新增「建立概念」作为起步第一阶段；旧步骤的 stage 值仍合法。
+export const STAGE_ORDER = Object.freeze(['建立概念', '建立问题', '理解方法', '看评价与反例', '核查近期竞争']);
+
+// SCAFFOLD-008（008.1）：起步路线 / 材料 / track 导航的固定文案与枚举。
+export const PASS_MODE_LABELS = Object.freeze({ map: '地图浏览', core: '读核心', deep: '精读' });
+
+export const TRACK_LABELS = Object.freeze({ start: '从这里开始', archive: '完整谱系（初期不必走）' });
+
+export const NODE_KIND_LABELS = Object.freeze({ paper: '论文', article: '材料', unit: '技术单元', external: '外链目录' });
+
+export const MATERIAL_FORMAT_LABELS = Object.freeze({
+  blog: '博客导读',
+  docs: '官方文档',
+  tutorial: '教程',
+  video: '视频',
+  primer: '站内方法说明',
+});
+
+export const MATERIAL_COVERAGE_LABELS = Object.freeze({
+  'web-page': '已核网页正文',
+  'partial-text': '正文选读',
+  'editorial-primer': '站内编辑说明',
+  identity: '身份待核',
+});
+
+// 多智能体贯通教材的唯一允许路径与章节标识（04 §2.1；labPath 仅允许这个精确值）。
+export const MULTIAGENT_LAB_PATH = '/learning/multiagent-lab.md';
+export const MULTIAGENT_LAB_SECTIONS = Object.freeze(['ma-u1', 'ma-u2', 'ma-u3', 'ma-u4']);
 
 // 论文章节标题唯一来源：目录与正文必须用同一份描述，避免两处文案漂移。
 export const PAPER_SECTION_TITLES = Object.freeze({
@@ -144,22 +185,22 @@ export const PAPER_SECTION_TITLES = Object.freeze({
     references: '相关文献',
     openQuestions: '局限与待核问题',
     questions: '读完后自查',
-    next: '下一篇',
+    next: '延伸阅读',
   }),
   standard: Object.freeze({
     reasons: '为什么读这篇',
     deepRead: '值得细读的段落',
     questions: '读完后自查',
-    next: '下一篇',
+    next: '延伸阅读',
   }),
   quick: Object.freeze({
     reasons: '为什么留意这篇',
     questions: '取全文时先核对',
-    next: '下一篇',
+    next: '延伸阅读',
   }),
   entry: Object.freeze({
     reasons: '它在路线里的角色',
-    next: '下一步',
+    next: '延伸阅读',
   }),
 });
 
@@ -199,13 +240,20 @@ export function recommendedDepthOf(paper) {
 }
 
 // hash 路由：'' / '#' / '#/' → 首页；'#/home'、'#/directions'、'#/papers'、'#/learn'、'#/brief'、
-// '#/foundations' 列表页；'#/route/<id>'、'#/paper/<id>'、'#/learn/<id>'、'#/brief/<id>' 直达；其他一律 null。
+// '#/foundations' 列表页；'#/route/<id>'、'#/paper/<id>'、'#/material/<id>'、'#/learn/<id>'、'#/brief/<id>'
+// 直达；其他一律 null。
+// SCAFFOLD-008：hash 内部允许 ?route=<方向>&track=start|archive（paper/material/learn 详情）与
+// ?unit=<单元id>（仅 learn 详情，可单独使用）；重复/未知参数、route/track 不成对、错误 track、
+// 非 learn 带 unit、列表或方向页带这些参数均返回无效路由。无 query 时返回形状与旧版完全一致。
 export function parseHash(raw) {
   if (raw === undefined || raw === null) return { view: 'home', id: null };
   const s = String(raw);
   if (s === '' || s === '#' || s === '#/') return { view: 'home', id: null };
   if (!s.startsWith('#/')) return null;
-  const parts = s
+  const qIndex = s.indexOf('?');
+  const path = qIndex === -1 ? s : s.slice(0, qIndex);
+  const queryString = qIndex === -1 ? null : s.slice(qIndex + 1);
+  const parts = path
     .slice(2)
     .split('/')
     .map((segment) => {
@@ -218,20 +266,73 @@ export function parseHash(raw) {
   if (parts.some((p) => p === null || p === '' || p === '.' || p === '..')) return null;
   const [view, id] = parts;
   const listViews = ['home', 'directions', 'papers', 'learn', 'brief', 'foundations'];
+  let parsed = null;
   if (parts.length === 1 && listViews.includes(view)) {
-    return { view, id: null };
-  }
-  if (parts.length === 2 && (view === 'route' || view === 'paper' || view === 'learn' || view === 'brief')) {
+    parsed = { view, id: null };
+  } else if (
+    parts.length === 2 &&
+    (view === 'route' || view === 'paper' || view === 'material' || view === 'learn' || view === 'brief')
+  ) {
     const mapped = view === 'learn' ? 'learnRoute' : view === 'brief' ? 'briefItem' : view;
-    return { view: mapped, id };
+    parsed = { view: mapped, id };
   }
-  return null;
+  if (!parsed) return null;
+  if (queryString === null) return parsed;
+  const ctx = parseHashQuery(queryString, parsed.view);
+  if (!ctx) return null;
+  return { ...parsed, ...ctx };
+}
+
+// hash 内 query 白名单：仅 route/track/unit；规则见 03 §5。
+function parseHashQuery(qs, view) {
+  if (qs === '') return null;
+  const out = {};
+  const seen = new Set();
+  for (const pair of qs.split('&')) {
+    const eq = pair.indexOf('=');
+    if (eq <= 0) return null;
+    const key = pair.slice(0, eq);
+    const rawValue = pair.slice(eq + 1);
+    if (!['route', 'track', 'unit'].includes(key) || seen.has(key)) return null;
+    seen.add(key);
+    let value;
+    try {
+      value = decodeURIComponent(rawValue);
+    } catch {
+      return null;
+    }
+    if (value === '' || value === '.' || value === '..') return null;
+    if (key === 'route') out.routeId = value;
+    else if (key === 'unit') out.unitId = value;
+    else out.track = value;
+  }
+  const detailViews = ['paper', 'material', 'learnRoute'];
+  if (out.unitId !== undefined && view !== 'learnRoute') return null;
+  if ((out.routeId !== undefined || out.track !== undefined) && !detailViews.includes(view)) return null;
+  if (out.routeId !== undefined && out.track === undefined) return null;
+  if (out.track !== undefined && out.routeId === undefined) return null;
+  if (out.track !== undefined && !['start', 'archive'].includes(out.track)) return null;
+  if (view === 'learnRoute' && out.unitId === undefined && (out.routeId !== undefined || out.track !== undefined)) {
+    return null;
+  }
+  return out;
 }
 
 // 与 parseHash 互逆：id 一律 encodeURIComponent，避免 '/', '?', '#' 破坏路由。
 export function buildHash(view, id = null) {
   if (id === null || id === undefined) return `#/${view}`;
   return `#/${view}/${encodeURIComponent(String(id))}`;
+}
+
+// 带路线上下文的详情 hash（03 §5）：route/track 成对附加；unit 可单独使用。
+export function buildContextHash(view, id, ctx = {}) {
+  const base = buildHash(view, id);
+  const params = [];
+  if (ctx.routeId && ctx.track) {
+    params.push(`route=${encodeURIComponent(ctx.routeId)}`, `track=${encodeURIComponent(ctx.track)}`);
+  }
+  if (ctx.unitId) params.push(`unit=${encodeURIComponent(ctx.unitId)}`);
+  return params.length > 0 ? `${base}?${params.join('&')}` : base;
 }
 
 export function getDirection(lib, id) {
@@ -242,8 +343,16 @@ export function getPaper(lib, id) {
   return lib.papers.find((p) => p.id === id) ?? null;
 }
 
+export function getMaterial(lib, id) {
+  return (lib.materials ?? []).find((m) => m.id === id) ?? null;
+}
+
+// 技术路线解析：先精确匹配现有 id；找不到时才把旧 tech-t4 显式别名为 tech-rag（04 §1）。
 export function getTechnicalRoute(lib, id) {
-  return lib.technicalRoutes.find((t) => t.id === id) ?? null;
+  const found = lib.technicalRoutes.find((t) => t.id === id) ?? null;
+  if (found) return found;
+  if (id === 'tech-t4') return lib.technicalRoutes.find((t) => t.id === 'tech-rag') ?? null;
+  return null;
 }
 
 export function getBrief(lib, id) {
@@ -257,6 +366,26 @@ export function sortDirections(lib) {
     const ob = typeof b.order === 'number' ? b.order : Number.POSITIVE_INFINITY;
     return oa - ob || String(a.id).localeCompare(String(b.id));
   });
+}
+
+// 方向状态：旧数据缺省按 active 读取（05 §2 兼容层）。
+export function directionStatusOf(direction) {
+  return direction?.status === 'deferred' ? 'deferred' : 'active';
+}
+
+// 默认入口（首页、方向列表、侧栏）只列 active；routesContaining 不过滤，保留 archive 关联（03 §5.6）。
+export function activeDirections(lib) {
+  return sortDirections(lib).filter((d) => directionStatusOf(d) === 'active');
+}
+
+// quick 依据的共同文案（03 §1 / 05 §3）：核过指定正文的 quick 不再称“仅摘要”；
+// 有正文不自动升 standard。列表、卡页、路线与 notices 共用此函数。
+export function depthBasisLabel(paper) {
+  const depth = deliveredDepthOf(paper);
+  if (depth === 'quick') {
+    return paper?.coverage?.mode === 'partial-text' ? '简读卡 · 摘要及指定正文已核' : DEPTH_LABELS.quick;
+  }
+  return DEPTH_LABELS[depth] ?? depth;
 }
 
 // 路线步骤与论文合并：paper 可能为 null（validateLibrary 会报错，渲染层显式提示）。
@@ -298,22 +427,242 @@ export function nextStepAfter(lib, directionId, paperId) {
   return entries[i + 1];
 }
 
-// 一篇论文在哪些方向路线中出现（含序位与上一篇/下一篇），用于论文页侧栏。
+// 一篇论文在哪些方向路线中出现（含序位、track 与上一篇/下一篇），用于论文页侧栏。
+// SCAFFOLD-008：返回项携带 track；旧数据只有 start（legacy 回退），新数据含 archive 关联（A08）。
 export function routesContaining(lib, paperId) {
+  return targetPositions(lib, { kind: 'paper', paperId });
+}
+
+// 任意 NodeTarget 在各方向 start/archive 轨道中的位置（paper 与 material 均适用，03 §5）。
+export function targetPositions(lib, target) {
+  const key = nodeTargetKey(target);
+  if (!key) return [];
   return sortDirections(lib).flatMap((direction) => {
-    const entries = routeEntries(lib, direction.id);
-    const i = entries.findIndex((e) => e.paperId === paperId);
-    if (i === -1) return [];
-    return [
-      {
+    const tracks = directionTracks(lib, direction);
+    const out = [];
+    const collect = (entries, track) => {
+      const i = entries.findIndex((e) => !e.external && nodeTargetKey(e.target) === key);
+      if (i === -1) return;
+      out.push({
         direction,
+        track,
         index: i + 1,
         total: entries.length,
         prev: entries[i - 1] ?? null,
         next: entries[i + 1] ?? null,
-      },
-    ];
+      });
+    };
+    collect(tracks.start, 'start');
+    if (tracks.mode === 'tracks') collect(tracks.archive, 'archive');
+    return out;
   });
+}
+
+// ---------- SCAFFOLD-008（008.1）：NodeTarget、双轨路线与 track 导航 ----------
+
+const NODE_TARGET_KINDS = ['paper', 'article', 'unit'];
+
+// NodeTarget 判别联合（03 §3）：恰好一个外键，kind 与键一致，unitRef 含 routeId+unitId。
+export function nodeTargetError(target) {
+  if (!target || typeof target !== 'object') return '目标必须是对象';
+  const { kind, paperId, materialId, unitRef } = target;
+  if (!NODE_TARGET_KINDS.includes(kind)) return `目标 kind 必须是 ${NODE_TARGET_KINDS.join('|')}：${kind}`;
+  const keys = [paperId, materialId, unitRef].filter((v) => v !== undefined && v !== null);
+  if (keys.length !== 1) return '目标必须恰好填写 paperId / materialId / unitRef 之一';
+  if (kind === 'paper' && (typeof paperId !== 'string' || paperId.trim() === '')) return 'paper 目标需要非空 paperId';
+  if (kind === 'article' && (typeof materialId !== 'string' || materialId.trim() === '')) {
+    return 'article 目标需要非空 materialId';
+  }
+  if (kind === 'unit') {
+    if (!unitRef || typeof unitRef !== 'object') return 'unit 目标需要 unitRef 对象';
+    if (typeof unitRef.routeId !== 'string' || unitRef.routeId.trim() === '') return 'unitRef.routeId 必须是非空字符串';
+    if (typeof unitRef.unitId !== 'string' || unitRef.unitId.trim() === '') return 'unitRef.unitId 必须是非空字符串';
+  }
+  return null;
+}
+
+export function nodeTargetKey(target) {
+  if (target?.kind === 'paper') return `paper:${target.paperId}`;
+  if (target?.kind === 'article') return `article:${target.materialId}`;
+  if (target?.kind === 'unit') return `unit:${target.unitRef?.routeId}/${target.unitRef?.unitId}`;
+  return null;
+}
+
+// 统一目标解析（03 §4）：首页、路线、前后节点、unit 链接共用；目标不存在返回 null。
+// 旧 paper 专用读取（getPaper）不得接 materialId——材料目标经此函数或 getMaterial 解析。
+export function resolveNodeTarget(lib, target) {
+  if (nodeTargetError(target)) return null;
+  if (target.kind === 'paper') {
+    const paper = getPaper(lib, target.paperId);
+    if (!paper) return null;
+    return {
+      kind: 'paper',
+      title: paper.displayTitle || paper.title,
+      href: buildHash('paper', paper.id),
+      availability: 'ready',
+      depthLabel: depthBasisLabel(paper),
+      lead: paper.lead ?? null,
+    };
+  }
+  if (target.kind === 'article') {
+    const material = getMaterial(lib, target.materialId);
+    if (!material) return null;
+    const pending = material.coverage?.mode === 'identity' || material.availability === 'pending';
+    return {
+      kind: 'article',
+      title: material.title,
+      href: buildHash('material', material.id),
+      availability: pending ? 'pending' : 'ready',
+      pendingReason: pending ? material.pendingReason ?? material.coverage?.limitations ?? '来源待核' : null,
+      formatLabel: MATERIAL_FORMAT_LABELS[material.format] ?? material.format ?? '材料',
+      lead: material.lead ?? null,
+    };
+  }
+  const route = getTechnicalRoute(lib, target.unitRef.routeId);
+  const unit = (route?.units ?? []).find((u) => u.id === target.unitRef.unitId) ?? null;
+  if (!route || !unit) return null;
+  const availability = unit.availability === 'pending' ? 'pending' : 'ready';
+  return {
+    kind: 'unit',
+    title: `${route.title} · ${unit.title}`,
+    href: `${buildHash('learn', route.id)}?unit=${encodeURIComponent(unit.id)}`,
+    availability,
+    pendingReason: availability === 'pending' ? unit.pendingReason ?? null : null,
+    lead: unit.goal ?? null,
+  };
+}
+
+function legacyStep(lib, step, i) {
+  const paper = getPaper(lib, step?.paperId);
+  return {
+    id: `legacy-${i + 1}`,
+    index: i + 1,
+    kind: 'paper',
+    external: false,
+    target: { kind: 'paper', paperId: step?.paperId },
+    paperId: step?.paperId,
+    materialId: undefined,
+    unitRef: undefined,
+    stage: step?.stage ?? null,
+    required: step?.required ?? null,
+    passMode: null,
+    purpose: step?.purpose ?? null,
+    readWhen: step?.readWhen ?? null,
+    check: step?.check ?? null,
+    availability: 'ready',
+    pendingReason: null,
+    nextAction: null,
+    paper,
+    resolved: paper ? resolveNodeTarget(lib, { kind: 'paper', paperId: step.paperId }) : null,
+  };
+}
+
+function normalizeStep(lib, step, i) {
+  if (step?.kind === 'external') {
+    return {
+      id: step?.id,
+      index: i + 1,
+      kind: 'external',
+      external: true,
+      target: null,
+      title: step?.title,
+      url: step?.url ?? null,
+      role: step?.role ?? null,
+      note: step?.note ?? null,
+      availability: step?.availability === 'pending' ? 'pending' : 'ready',
+      pendingReason: step?.pendingReason ?? null,
+      checkedAt: step?.checkedAt ?? null,
+      resolved: null,
+    };
+  }
+  const target = { kind: step?.kind, paperId: step?.paperId, materialId: step?.materialId, unitRef: step?.unitRef };
+  const availability = step?.availability === 'pending' ? 'pending' : 'ready';
+  return {
+    id: step?.id,
+    index: i + 1,
+    kind: step?.kind,
+    external: false,
+    target,
+    paperId: step?.paperId,
+    materialId: step?.materialId,
+    unitRef: step?.unitRef,
+    stage: step?.stage ?? null,
+    required: step?.required ?? null,
+    passMode: step?.passMode ?? null,
+    purpose: step?.purpose ?? null,
+    readWhen: step?.readWhen ?? null,
+    check: step?.check ?? null,
+    availability,
+    pendingReason: availability === 'pending' ? step?.pendingReason ?? null : null,
+    nextAction: step?.nextAction ?? null,
+    paper: step?.kind === 'paper' ? getPaper(lib, step?.paperId) : null,
+    resolved: resolveNodeTarget(lib, target),
+  };
+}
+
+// 方向的双轨读取（01/03）：新数据以 startRoute/archiveRoute 为权威，旧 route 只读回退（05 §2）。
+// 返回 { mode: 'tracks'|'legacy', start: [...], archive: [...] }；元素为规范化 step（含解析后的目标）。
+export function directionTracks(lib, direction) {
+  if (!direction) return { mode: 'none', start: [], archive: [] };
+  const hasNew = Array.isArray(direction.startRoute) || Array.isArray(direction.archiveRoute);
+  if (!hasNew) {
+    return { mode: 'legacy', start: (direction.route ?? []).map((step, i) => legacyStep(lib, step, i)), archive: [] };
+  }
+  const norm = (track) => (Array.isArray(track) ? track.map((step, i) => normalizeStep(lib, step, i)) : []);
+  return { mode: 'tracks', start: norm(direction.startRoute), archive: norm(direction.archiveRoute) };
+}
+
+export function trackEntries(lib, directionId, track) {
+  if (!['start', 'archive'].includes(track)) return [];
+  const direction = getDirection(lib, directionId);
+  if (!direction) return [];
+  const tracks = directionTracks(lib, direction);
+  return track === 'start' ? tracks.start : tracks.archive;
+}
+
+// 目标在某方向指定 track 内的序位（前后节点导航，03 §5）；不是成员返回 null。
+export function trackPosition(lib, directionId, track, target) {
+  const key = nodeTargetKey(target);
+  if (!key) return null;
+  const entries = trackEntries(lib, directionId, track);
+  const i = entries.findIndex((e) => !e.external && nodeTargetKey(e.target) === key);
+  if (i === -1) return null;
+  return {
+    direction: getDirection(lib, directionId),
+    track,
+    index: i + 1,
+    total: entries.length,
+    step: entries[i],
+    prev: entries[i - 1] ?? null,
+    next: entries[i + 1] ?? null,
+  };
+}
+
+// 无 query 的旧链接：目标唯一属于某 active startRoute 时推导起步上下文（03 §5.2）；
+// 否则返回 null，由渲染层只给“返回相关路线”，不擅自选 archive 顺序。
+export function inferStartContext(lib, target) {
+  const key = nodeTargetKey(target);
+  if (!key) return null;
+  const matches = activeDirections(lib).filter((direction) =>
+    trackEntries(lib, direction.id, 'start').some((e) => !e.external && nodeTargetKey(e.target) === key),
+  );
+  return matches.length === 1 ? { routeId: matches[0].id, track: 'start' } : null;
+}
+
+// 技术路线 featured 集合（04 §1）；旧数据没有 featured 时返回 []，页面继续旧布局。
+export function featuredTechnicalRoutes(lib) {
+  return [...lib.technicalRoutes]
+    .filter((r) => r.kind === 'featured')
+    .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+}
+
+// 库外条目的短显示标签（REWORK-007 附带整理）：arXiv abs 链接显示编号，避免裸长 URL 当标题；
+// 其它链接回退完整 source 文案。链接目标不变，仅改可见文字。
+export function briefSourceLabel(item, href) {
+  const raw = href || item?.source || '';
+  const m = /^https?:\/\/arxiv\.org\/abs\/([^#?/]+)(?:[/?#].*)?$/i.exec(raw);
+  if (m) return `arXiv:${m[1]}`;
+  return item?.source ?? '';
 }
 
 // 简报条目目标：paperId → 站内论文；source → https 外链；缺失/不安全返回显式降级类型。
@@ -333,7 +682,8 @@ export function briefItemTarget(lib, item) {
 export function paperBadges(paper) {
   const badges = [];
   const depth = deliveredDepthOf(paper);
-  if (depth) badges.push({ text: DEPTH_LABELS[depth] ?? depth, kind: depth });
+  // 深度徽章文案统一走 depthBasisLabel（03 §1）：核过指定正文的 quick 不再显示“仅摘要”。
+  if (depth) badges.push({ text: depthBasisLabel(paper), kind: depth });
   if (paper.importance && paper.importance !== 'unknown') {
     badges.push({ text: IMPORTANCE_LABELS[paper.importance] ?? paper.importance, kind: 'plain' });
   }
@@ -410,6 +760,7 @@ export function libraryStatus(lib) {
   const counts = {
     directions: lib.directions.length,
     papers: lib.papers.length,
+    materials: (lib.materials ?? []).length,
     technicalRoutes: lib.technicalRoutes.length,
     briefs: lib.briefs.length,
   };
@@ -531,6 +882,49 @@ export function validateLibrary(lib) {
         else if (!block.symbols.every((s) => isStr(s?.symbol) && isStr(s?.meaning))) push(`${bat} formula.symbols 需要 symbol 与 meaning`);
       }
     });
+  }
+
+  // readingActions（03 §2）：Preserve/Explain/Skip 的 target、why 非空；Explain 必须 blocks 与
+  // sectionId 二选一（sectionId 必须引用本卡实际渲染的正文 section）；entry 不得有内容性动作。
+  function validateReadingActions(at, item, sections, forbidContent) {
+    const ra = item?.readingActions;
+    if (ra == null) return;
+    if (typeof ra !== 'object' || isArr(ra)) {
+      push(`${at} readingActions 必须是对象`);
+      return;
+    }
+    for (const listName of ['preserve', 'explain', 'skip']) {
+      const list = ra[listName];
+      if (list == null) continue;
+      if (forbidContent && isArr(list) && list.length > 0) {
+        push(`${at} entry 不得有内容性动作（readingActions.${listName}）`);
+        continue;
+      }
+      if (!isArr(list)) {
+        push(`${at} readingActions.${listName} 必须是数组`);
+        continue;
+      }
+      list.forEach((act, j) => {
+        const aat = `${at} readingActions.${listName}[${j}]`;
+        if (!isStr(act?.target)) push(`${aat} 缺少 target`);
+        if (!isStr(act?.why)) push(`${aat} 缺少 why`);
+        if (listName !== 'explain') return;
+        const hasBlocks = act?.blocks != null;
+        const hasSection = act?.sectionId != null;
+        if (hasBlocks && hasSection) push(`${aat} blocks 与 sectionId 只能二选一`);
+        if (!hasBlocks && !hasSection) push(`${aat} 必须提供非空 blocks 或有效 sectionId 之一（只有 target/why 不算讲解）`);
+        if (hasBlocks) {
+          if (!isArr(act.blocks) || act.blocks.length === 0) push(`${aat} blocks 必须是非空数组`);
+          else validateBlocks(`${aat}.blocks`, act.blocks);
+        }
+        if (hasSection) {
+          if (!isStr(act.sectionId)) push(`${aat} sectionId 必须是字符串`);
+          else if (!sections.some((s) => s?.id === act.sectionId)) {
+            push(`${aat} sectionId 引用了本卡不渲染的正文 section：${act.sectionId}`);
+          }
+        }
+      });
+    }
   }
 
   // ---------- home（可选） ----------
@@ -690,9 +1084,26 @@ export function validateLibrary(lib) {
       if ((depth === 'deep' || depth === 'standard') && !['full-text', 'partial-text'].includes(mode)) {
         push(`${at} ${depth} 需要正文依据，coverage.mode 应为 full-text|partial-text：${mode}`);
       }
-      if (depth === 'quick' && mode !== 'abstract') push(`${at} quick 的 coverage.mode 应为 abstract：${mode}`);
+      // 008.1 §2C：quick 允许 abstract（仅摘要）或 partial-text（摘要+指定正文已核）；
+      // partial-text 的 quick 必须在 coverage.sections 登记实际读取范围。
+      if (depth === 'quick' && !['abstract', 'partial-text'].includes(mode)) {
+        push(`${at} quick 的 coverage.mode 应为 abstract|partial-text：${mode}`);
+      }
+      if (depth === 'quick' && mode === 'partial-text' && (!isArr(coverage.sections) || coverage.sections.length === 0)) {
+        push(`${at} quick（partial-text）必须在 coverage.sections 登记已核正文范围`);
+      }
       if (depth === 'entry' && mode !== 'metadata') push(`${at} entry 的 coverage.mode 应为 metadata：${mode}`);
     }
+    // 起步卡三问（03 §1）：learner 三字段全非空；与 lead 重复内容只显示一次是渲染层职责。
+    if (paper.learner != null) {
+      if (typeof paper.learner !== 'object') push(`${at} learner 必须是对象`);
+      else {
+        for (const field of ['gist', 'value', 'intent']) {
+          if (!isStr(paper.learner[field])) push(`${at} learner 缺少 ${field}`);
+        }
+      }
+    }
+    validateReadingActions(at, paper, paper.sections ?? [], depth === 'entry');
     if (paper.next != null) {
       if (typeof paper.next !== 'object') push(`${at} next 必须是对象`);
       else {
@@ -711,6 +1122,85 @@ export function validateLibrary(lib) {
         push(`papers[${i}] references[${j}].paperId 无法解析：${ref.paperId}`);
       }
     });
+  });
+
+  // ---------- materials（SCAFFOLD-008；缺 materials 视为 []，旧库无此集合） ----------
+  const materialIds = new Set();
+  (lib.materials ?? []).forEach((material, i) => {
+    const at = `materials[${i}]`;
+    if (!isStr(material.id)) push(`${at} 缺少 id`);
+    else if (materialIds.has(material.id)) push(`${at} id 重复：${material.id}`);
+    else if (paperIds.has(material.id)) push(`${at} 材料 id 与论文 id 重名：${material.id}`);
+    else materialIds.add(material.id);
+    if (!isStr(material.title)) push(`${at} 缺少 title`);
+    if (!['blog', 'docs', 'tutorial', 'video', 'primer'].includes(material.format)) {
+      push(`${at} format 必须是 blog|docs|tutorial|video|primer：${material.format}`);
+    }
+    // primer 可空 url；其他类型必须 https。
+    if (material.format !== 'primer' && !safeExternalHref(material.url)) {
+      push(`${at} url 必须是 https：${material.url}`);
+    }
+    if (material.format === 'primer' && material.url != null && !safeExternalHref(material.url)) {
+      push(`${at} primer 的 url 必须是 https：${material.url}`);
+    }
+    const mcoverage = material.coverage;
+    if (!mcoverage || typeof mcoverage !== 'object') {
+      push(`${at} 缺少 coverage`);
+    } else {
+      if (!['web-page', 'partial-text', 'editorial-primer', 'identity'].includes(mcoverage.mode)) {
+        push(`${at} coverage.mode 必须是 web-page|partial-text|editorial-primer|identity：${mcoverage.mode}`);
+      }
+      for (const field of ['basis', 'version', 'limitations', 'checkedAt']) {
+        if (!isStr(mcoverage[field])) push(`${at} coverage 缺少 ${field}`);
+      }
+      if (!isArr(mcoverage.sections) || !mcoverage.sections.every(isStr)) {
+        push(`${at} coverage.sections 必须是字符串数组`);
+      }
+      if (material.format === 'primer' && mcoverage.mode !== 'editorial-primer') {
+        push(`${at} primer 的 coverage.mode 应为 editorial-primer`);
+      }
+      // identity 仅用于 pending 材料，不发布内容判断。
+      if (mcoverage.mode === 'identity') {
+        if (material.availability !== 'pending') push(`${at} identity 材料必须 availability=pending`);
+        if ((material.body?.blocks ?? []).length > 0) push(`${at} identity 材料不得携带正文 body`);
+        if ((material.sections ?? []).length > 0) push(`${at} identity 材料不得携带 sections`);
+        if (['preserve', 'explain', 'skip'].some((k) => (material.readingActions?.[k] ?? []).length > 0)) {
+          push(`${at} identity 材料不得携带 readingActions`);
+        }
+      }
+    }
+    if (material.availability != null && !['ready', 'pending'].includes(material.availability)) {
+      push(`${at} availability 必须是 ready|pending：${material.availability}`);
+    }
+    if (material.availability === 'pending' && !isStr(material.pendingReason)) {
+      push(`${at} pending 材料必须提供 pendingReason`);
+    }
+    if (!isStr(material.lead)) push(`${at} 缺少 lead`);
+    if (mcoverage?.mode !== 'identity') {
+      if (!material.learner || typeof material.learner !== 'object') {
+        push(`${at} 非 identity 材料必须有 learner 三问`);
+      } else {
+        for (const field of ['gist', 'value', 'intent']) {
+          if (!isStr(material.learner[field])) push(`${at} learner 缺少 ${field}`);
+        }
+      }
+    }
+    validateReadingActions(at, material, material.sections ?? [], false);
+    if (material.format === 'primer') {
+      if (!material.body || !isArr(material.body.blocks) || material.body.blocks.length === 0) {
+        push(`${at} primer 必须有非空 body.blocks`);
+      }
+    }
+    validateBlocks(`${at}.body.blocks`, material.body?.blocks ?? []);
+    if (!isArr(material.sections)) {
+      if (material.sections != null) push(`${at} sections 必须是数组`);
+    } else {
+      material.sections.forEach((section, j) => {
+        if (!isStr(section?.id)) push(`${at} sections[${j}] 缺少 id（用于锚点）`);
+        if (!isStr(section?.heading)) push(`${at} sections[${j}] 缺少 heading`);
+        validateBlocks(`${at} sections[${j}].blocks`, section?.blocks ?? []);
+      });
+    }
   });
 
   // ---------- directions ----------
@@ -738,9 +1228,83 @@ export function validateLibrary(lib) {
         });
       }
     }
-    if (!isArr(direction.route)) {
+
+    const hasTracks = Array.isArray(direction.startRoute) || Array.isArray(direction.archiveRoute);
+    if (hasTracks) {
+      // 新数据：startRoute/archiveRoute 权威；route 与之同时存在即失败；status 必须显式。
+      if (direction.route != null) push(`${at} route 不得与 startRoute/archiveRoute 同时存在`);
+      if (!['active', 'deferred'].includes(direction.status)) {
+        push(`${at} 新数据必须显式 status=active|deferred：${direction.status}`);
+      }
+      if (direction.startHint != null && !isStr(direction.startHint)) push(`${at} startHint 必须是字符串`);
+      if (direction.trackClosing != null && !isStr(direction.trackClosing)) push(`${at} trackClosing 必须是字符串`);
+      if (direction.deferredNote != null && !isStr(direction.deferredNote)) push(`${at} deferredNote 必须是字符串`);
+      if (direction.archiveLabel != null && !isStr(direction.archiveLabel)) push(`${at} archiveLabel 必须是字符串`);
+      const unitIndex = new Map();
+      for (const route of lib.technicalRoutes) {
+        for (const unit of route.units ?? []) unitIndex.set(`${route.id}/${unit.id}`, true);
+      }
+      const validateTrackSteps = (trackName, steps, allowExternal) => {
+        if (!isArr(steps)) {
+          push(`${at} ${trackName} 必须是数组`);
+          return;
+        }
+        const seenIds = new Set();
+        const seenTargets = new Set();
+        steps.forEach((step, j) => {
+          const sat = `${at} ${trackName}[${j}]`;
+          if (!isStr(step?.id)) push(`${sat} 缺少 id`);
+          else if (seenIds.has(step.id)) push(`${sat} id 重复：${step.id}`);
+          else seenIds.add(step.id);
+          if (step?.kind === 'external') {
+            if (!allowExternal) push(`${sat} external 只允许出现在 archiveRoute`);
+            for (const field of ['title', 'role', 'note']) {
+              if (!isStr(step?.[field])) push(`${sat} 外链目录缺少 ${field}`);
+            }
+            if (step?.url != null && !safeExternalHref(step.url)) push(`${sat} url 必须是 https：${step.url}`);
+            if (step?.availability !== 'pending' && !safeExternalHref(step?.url)) {
+              push(`${sat} ready 外链必须有可访问的 https url`);
+            }
+          } else {
+            const terr = nodeTargetError(step);
+            if (terr) push(`${sat} ${terr}`);
+            if (step?.kind === 'paper' && !paperIds.has(step?.paperId)) {
+              push(`${sat} paperId 无法解析：${step?.paperId}`);
+            }
+            if (step?.kind === 'article' && !materialIds.has(step?.materialId)) {
+              push(`${sat} materialId 无法解析：${step?.materialId}`);
+            }
+            if (step?.kind === 'unit' && !unitIndex.has(`${step?.unitRef?.routeId}/${step?.unitRef?.unitId}`)) {
+              push(`${sat} unitRef 无法解析：${step?.unitRef?.routeId}/${step?.unitRef?.unitId}`);
+            }
+            const key = nodeTargetKey(step);
+            if (key) {
+              if (seenTargets.has(key)) push(`${sat} 同一 track 内目标重复：${key}`);
+              else seenTargets.add(key);
+            }
+            for (const field of ['purpose', 'readWhen', 'check']) {
+              if (!isStr(step?.[field])) push(`${sat} 缺少 ${field}`);
+            }
+            if (step?.stage != null && !STAGE_ORDER.includes(step.stage)) push(`${sat} .stage 不在固定阶段内：${step.stage}`);
+            if (step?.required != null && !['必读', '选读'].includes(step.required)) push(`${sat} .required 必须是 必读|选读：${step.required}`);
+            if (step?.passMode != null && !['map', 'core', 'deep'].includes(step.passMode)) {
+              push(`${sat} .passMode 必须是 map|core|deep：${step.passMode}`);
+            }
+            if (step?.availability != null && !['ready', 'pending'].includes(step.availability)) {
+              push(`${sat} .availability 必须是 ready|pending：${step.availability}`);
+            }
+            if (step?.availability === 'pending' && !isStr(step?.pendingReason)) {
+              push(`${sat} pending 步骤必须提供 pendingReason`);
+            }
+          }
+        });
+      };
+      validateTrackSteps('startRoute', direction.startRoute, false);
+      validateTrackSteps('archiveRoute', direction.archiveRoute, true);
+    } else if (!isArr(direction.route)) {
       push(`${at} route 必须是数组`);
     } else {
+      // 旧格式只读回退（05 §2 兼容层）；既有论文步骤校验不变。
       const seen = new Set();
       direction.route.forEach((step, j) => {
         if (!isStr(step?.paperId)) {
@@ -766,7 +1330,10 @@ export function validateLibrary(lib) {
     const at = `technicalRoutes[${i}]`;
     if (!isStr(route.id)) push(`${at} 缺少 id`);
     if (!isStr(route.title)) push(`${at} 缺少 title`);
-    if (!['core', 'advanced'].includes(route.kind ?? 'core')) push(`${at} kind 必须是 core|advanced：${route.kind}`);
+    // SCAFFOLD-008：新增 featured（默认三条）；旧 core/advanced 继续存在、默认折叠。
+    if (!['core', 'advanced', 'featured'].includes(route.kind ?? 'core')) {
+      push(`${at} kind 必须是 core|advanced|featured：${route.kind}`);
+    }
     if (typeof route.order !== 'number') push(`${at} order 必须是数字`);
     for (const field of ['capability', 'prerequisites', 'applicability', 'summary']) {
       if (!isStr(route[field])) push(`${at} 缺少 ${field}`);
@@ -804,9 +1371,20 @@ export function validateLibrary(lib) {
       for (const field of ['title', 'goal', 'selfCheck']) {
         if (!isStr(unit?.[field])) push(`${uat} 缺少 ${field}`);
       }
-      if (!isArr(unit?.resourceIds) || unit.resourceIds.length === 0) {
-        push(`${uat} resourceIds 必须是非空数组`);
-      } else {
+      // SCAFFOLD-008（04 §4/§5）：单元要么是恰好一个主资源的 resourceIds，要么是非空 lesson.blocks
+      // 且 resourceIds=[]；禁止两边都空；availability 缺省 ready，pending 必须有 pendingReason；
+      // ready 资源型单元恰有一个主资源；labPath 仅允许多智能体教材精确路径。
+      if (unit?.availability != null && !['ready', 'pending'].includes(unit.availability)) {
+        push(`${uat} availability 必须是 ready|pending：${unit.availability}`);
+      }
+      const unitReady = (unit?.availability ?? 'ready') === 'ready';
+      if (!unitReady && !isStr(unit?.pendingReason)) push(`${uat} pending 单元必须提供 pendingReason`);
+      const hasResources = isArr(unit?.resourceIds) && unit.resourceIds.length > 0;
+      const lessonBlocks = unit?.lesson?.blocks;
+      const hasLesson = isArr(lessonBlocks) && lessonBlocks.length > 0;
+      if (hasLesson && hasResources) push(`${uat} lesson.blocks 与 resourceIds 只能二选一（编辑课单元的 resourceIds 应为 []）`);
+      if (!hasLesson && !hasResources) push(`${uat} 需要非空 resourceIds 或非空 lesson.blocks 之一`);
+      if (hasResources) {
         unit.resourceIds.forEach((id) => {
           if (!resourceIds.has(id)) push(`${uat} resourceIds 无法解析：${id}`);
         });
@@ -814,6 +1392,16 @@ export function validateLibrary(lib) {
           .map((id) => (route.resources ?? []).find((r) => r.id === id))
           .filter((r) => r && r.primary === true).length;
         if (primaryCount > 1) push(`${uat} 主资源最多 1 个，当前 ${primaryCount} 个`);
+        if (unitReady && primaryCount !== 1) push(`${uat} ready 资源型单元恰有 1 个主资源，当前 ${primaryCount} 个`);
+      }
+      if (hasLesson) validateBlocks(`${uat}.lesson.blocks`, lessonBlocks);
+      if (unit?.labPath != null) {
+        if (unit.labPath !== MULTIAGENT_LAB_PATH) push(`${uat} labPath 只允许精确值 ${MULTIAGENT_LAB_PATH}`);
+        if (!MULTIAGENT_LAB_SECTIONS.includes(unit?.labSection)) {
+          push(`${uat} labSection 必须是 ${MULTIAGENT_LAB_SECTIONS.join('|')}：${unit?.labSection}`);
+        }
+      } else if (unit?.labSection != null) {
+        push(`${uat} labSection 需要同时提供 labPath`);
       }
       if (unit.relatedPaperIds != null) {
         if (!isArr(unit.relatedPaperIds)) push(`${uat} relatedPaperIds 必须是数组`);
@@ -851,6 +1439,38 @@ export function validateLibrary(lib) {
       });
     }
   });
+
+  // home.startHere（03 §4）：typed NodeTarget + routeId/track='start'，必须是该 startRoute 第一节点；
+  // 旧 startHerePaperId 只读适配，两者同时存在即失败。
+  if (lib.home?.startHere != null && lib.home?.startHerePaperId != null) {
+    push('home.startHere 与 home.startHerePaperId 不得同时存在');
+  }
+  if (lib.home?.startHere != null) {
+    const sh = lib.home.startHere;
+    const terr = nodeTargetError(sh);
+    if (terr) push(`home.startHere ${terr}`);
+    if (sh?.track !== 'start') push(`home.startHere.track 必须是 start：${sh?.track}`);
+    if (!isStr(sh?.routeId) || !directionIds.has(sh.routeId)) {
+      push(`home.startHere.routeId 无法解析：${sh?.routeId}`);
+    } else {
+      const first = trackEntries(lib, sh.routeId, 'start')[0] ?? null;
+      if (!first || first.external || nodeTargetKey(first.target) !== nodeTargetKey(sh)) {
+        push('home.startHere 必须是该方向 startRoute 的第一节点');
+      }
+    }
+    if (!terr) {
+      if (sh.kind === 'paper' && !paperIds.has(sh.paperId)) push(`home.startHere.paperId 无法解析：${sh.paperId}`);
+      if (sh.kind === 'article' && !materialIds.has(sh.materialId)) {
+        push(`home.startHere.materialId 无法解析：${sh.materialId}`);
+      }
+      if (sh.kind === 'unit') {
+        const route = lib.technicalRoutes.find((t) => t.id === sh.unitRef?.routeId);
+        if (!route || !(route.units ?? []).some((u) => u.id === sh.unitRef?.unitId)) {
+          push(`home.startHere.unitRef 无法解析：${sh.unitRef?.routeId}/${sh.unitRef?.unitId}`);
+        }
+      }
+    }
+  }
 
   if (lib.home?.startHerePaperId != null && !paperIds.has(lib.home.startHerePaperId)) {
     push(`home.startHerePaperId 无法解析：${lib.home.startHerePaperId}`);
@@ -1131,12 +1751,10 @@ function crumb(parts) {
   return p;
 }
 
+// REWORK-007 §3：列表与首页预览用一行纯文本 meta；entry 的完整诚实标注句只在论文页页眉出现。
 function badgeLine(paper) {
-  const p = el('p', 'lib-badges');
-  for (const badge of paperBadges(paper)) {
-    p.appendChild(el('span', `lib-badge${['deep', 'standard'].includes(badge.kind) ? ' lib-badge-kind' : ''}`, badge.text));
-  }
-  return p;
+  const texts = paperBadges(paper).map((b) => (b.kind === 'entry' ? '原文入口' : b.text));
+  return el('p', 'lib-depth-note', texts.join(' · '));
 }
 
 // ---------- block 渲染：白名单 DOM，禁止 innerHTML ----------
@@ -1181,7 +1799,13 @@ function renderComparison(block) {
   }
   table.appendChild(tbody);
   wrap.appendChild(table);
-  wrap.appendChild(el('p', 'lib-table-hint', '表格可横向滚动；表内数值未逐格核对，结论以正文叙述为准。'));
+  // 只对含数值的表格显示数值核对声明（纯概念表不显示，避免模板感）。
+  const hasNumbers = (block.rows ?? []).some((row) => row.some((cell) => /\d/.test(String(cell))));
+  wrap.appendChild(
+    el('p', 'lib-table-hint', hasNumbers
+      ? '表格可横向滚动；表内数值未逐格核对，结论以正文叙述为准。'
+      : '表格可横向滚动。'),
+  );
   return wrap;
 }
 
@@ -1253,8 +1877,30 @@ function latestBrief(lib) {
   return [...lib.briefs].sort((a, b) => String(b.date).localeCompare(String(a.date)))[0];
 }
 
+// 带类型首读的详情链接（03 §4/§5）：论文/材料带 route+track；unit 另带 unit 定位。
+function startTargetHref(target) {
+  if (target?.kind === 'paper') return buildContextHash('paper', target.paperId, { routeId: target.routeId, track: 'start' });
+  if (target?.kind === 'article') return buildContextHash('material', target.materialId, { routeId: target.routeId, track: 'start' });
+  if (target?.kind === 'unit') {
+    return buildContextHash('learn', target.unitRef.routeId, { routeId: target.routeId, track: 'start', unitId: target.unitRef.unitId });
+  }
+  return null;
+}
+
+// 路线步骤的详情链接（03 §5）：外链目录直接开 https；站内目标带 route/track 上下文。
+function stepHref(directionId, track, step) {
+  if (step?.external) return safeExternalHref(step.url);
+  const target = step?.target;
+  if (!target) return null;
+  const ctx = { routeId: directionId, track };
+  if (target.kind === 'paper') return buildContextHash('paper', target.paperId, ctx);
+  if (target.kind === 'article') return buildContextHash('material', target.materialId, ctx);
+  if (target.kind === 'unit') return buildContextHash('learn', target.unitRef.routeId, { ...ctx, unitId: target.unitRef.unitId });
+  return null;
+}
+
 function renderHome(container) {
-  const home = LIBRARY.home;
+  const home = renderLibrary.home;
   const page = el('div', 'lib-home');
   container.appendChild(page);
   if (!home) {
@@ -1262,124 +1908,45 @@ function renderHome(container) {
     page.appendChild(emptyBox('首页说明尚未接入。'));
     return;
   }
+  // REWORK-007 §2：首页需要时间锚点——最新简报日期与更新日并列；精选区移到第一位。
+  const latest = latestBrief(renderLibrary);
   page.appendChild(el('h1', 'lib-display', home.title));
   page.appendChild(el('p', 'lib-sub', home.intro));
-  page.appendChild(el('p', 'lib-home-updated', `内容更新日期 ${home.updatedOn}（只反映本页内容的整理时间，不是论文发表时间）`));
+  page.appendChild(
+    el(
+      'p',
+      'lib-home-updated',
+      `内容更新日期 ${home.updatedOn}（只反映本页内容的整理时间，不是论文发表时间）；最新简报 ${latest ? latest.date : '尚无产出'}（工作日更新，缺日即当日未产出）。`,
+    ),
+  );
 
   const grid = el('div', 'lib-home-grid');
   page.appendChild(grid);
 
-  // 区一：方向与路线
-  const directions = sortDirections(LIBRARY);
-  const dirBody = el('div', 'lib-zone-body');
-  if (directions.length === 0) dirBody.appendChild(emptyBox(EMPTY_NOTICES.directions));
-  for (const direction of directions) {
-    const item = el('div', 'lib-zone-item');
-    const title = el('p', 'lib-zone-item-title');
-    title.appendChild(link(buildHash('route', direction.id), direction.title));
-    item.appendChild(title);
-    if (direction.summary) item.appendChild(el('p', 'lib-zone-item-note', direction.summary));
-    dirBody.appendChild(item);
-  }
-  grid.appendChild(
-    homeZone(
-      home.zones.find((z) => z.key === 'directions') ?? {
-        key: 'directions',
-        title: '方向与路线',
-        purpose: '把“可以研究什么”变成有边界、有依据的候选，并给一条按阶段推进的阅读路线。',
-        howToUse: '先看方向说明与当前研究情况，再决定要不要按路线读。',
-        entryLabel: '查看三个方向',
-        entryHash: '#/directions',
-      },
-      dirBody,
-    ),
-  );
-
-  // 区二：论文阅读
-  const paperBody = el('div', 'lib-zone-body');
-  const startPaper = getPaper(LIBRARY, home.startHerePaperId);
-  if (startPaper) {
-    const item = el('div', 'lib-zone-item');
-    item.appendChild(el('p', 'lib-zone-flag', '建议先读'));
-    const title = el('p', 'lib-zone-item-title');
-    title.appendChild(paperLink(startPaper));
-    item.appendChild(title);
-    item.appendChild(badgeLine(startPaper));
-    item.appendChild(el('p', 'lib-zone-item-note', startPaper.lead));
-    const actions = el('p', 'lib-actions');
-    actions.appendChild(link(buildHash('paper', startPaper.id), '打开阅读卡', 'lib-btn lib-btn-primary'));
-    actions.appendChild(link(buildHash('papers'), '全部论文', 'lib-btn'));
-    item.appendChild(actions);
-    paperBody.appendChild(item);
-  } else if (LIBRARY.papers.length === 0) {
-    paperBody.appendChild(emptyBox(EMPTY_NOTICES.papers));
-  }
-  grid.appendChild(
-    homeZone(
-      home.zones.find((z) => z.key === 'papers') ?? {
-        key: 'papers',
-        title: '论文阅读',
-        purpose: '单篇论文读到能讲清楚它解决什么、怎么做、证据支持到哪里。',
-        howToUse: '从建议先读的一篇开始，按“读到什么程度”自查。',
-        entryLabel: '打开全部论文',
-        entryHash: '#/papers',
-      },
-      paperBody,
-    ),
-  );
-
-  // 区三：技术学习
-  const learnBody = el('div', 'lib-zone-body');
-  const core = coreTechnicalRoutes(LIBRARY);
-  if (core.length === 0) learnBody.appendChild(emptyBox(EMPTY_NOTICES.learnCore));
-  for (const route of core) {
-    const item = el('div', 'lib-zone-item');
-    const title = el('p', 'lib-zone-item-title');
-    title.appendChild(link(buildHash('learn', route.id), route.title));
-    item.appendChild(title);
-    const count = route.units?.length ?? 0;
-    const state = routeStartable(LIBRARY, route) ? '已有可开始单元' : '可开始单元待补核';
-    item.appendChild(el('p', 'lib-zone-item-note', `共 ${count} 个单元，${state}。${route.prerequisites ?? ''}`));
-    learnBody.appendChild(item);
-  }
-  const advanced = advancedTechnicalRoutes(LIBRARY);
-  if (advanced.length > 0) {
-    const line = el('p', 'lib-zone-adv');
-    line.appendChild(el('span', 'lib-step-label', '按需深入：'));
-    advanced.forEach((route, i) => {
-      if (i > 0) line.appendChild(document.createTextNode('；'));
-      line.appendChild(link(buildHash('learn', route.id), route.title));
-    });
-    learnBody.appendChild(line);
-  }
-  grid.appendChild(
-    homeZone(
-      home.zones.find((z) => z.key === 'learn') ?? {
-        key: 'learn',
-        title: '技术学习',
-        purpose: '建立做 Agent 研究要用的工程与评价能力。',
-        howToUse: '不必先选题，按主干顺序学，已掌握的部分用单元自查跳过。',
-        entryLabel: '进入技术学习',
-        entryHash: '#/learn',
-      },
-      learnBody,
-    ),
-  );
-
-  // 区四：每日精选
+  // 每日精选区（第一位：唯一每天变化的内容）
   const briefBody = el('div', 'lib-zone-body');
-  const latest = latestBrief(LIBRARY);
   if (latest) {
     briefBody.appendChild(el('p', 'lib-zone-flag', `最近一期 ${latest.date}`));
+    // 本期为空窗口（索引滞后等）时，如实保留本期并指向最近有内容的一期。
+    if (latest.items.length === 0) {
+      const lastNonEmpty = [...renderLibrary.briefs]
+        .sort((a, b) => String(b.date).localeCompare(String(a.date)))
+        .find((b) => b.items.length > 0);
+      if (lastNonEmpty) {
+        const hint = el('p', 'lib-muted', '本期为空窗口（arXiv 索引滞后），暂无条目；最近有内容的一期：');
+        hint.appendChild(link(buildHash('brief', lastNonEmpty.id), lastNonEmpty.date));
+        briefBody.appendChild(hint);
+      }
+    }
     for (const item of latest.items.slice(0, 3)) {
       const line = el('div', 'lib-zone-item');
       const title = el('p', 'lib-zone-item-title');
-      const target = briefItemTarget(LIBRARY, item);
+      const target = briefItemTarget(renderLibrary, item);
       if (target?.kind === 'paper') {
-        const paper = getPaper(LIBRARY, target.paperId);
+        const paper = getPaper(renderLibrary, target.paperId);
         title.appendChild(paperLink(paper));
       } else if (target?.kind === 'external') {
-        title.appendChild(externalLink(target.href, item.source));
+        title.appendChild(externalLink(target.href, briefSourceLabel(item, target.href)));
       } else {
         title.appendChild(el('span', 'lib-unsafe-link', `${item.paperId ?? item.source ?? ''}（关联未接入）`));
       }
@@ -1404,9 +1971,164 @@ function renderHome(container) {
     ),
   );
 
-  // 区五：经典书目
+  // 论文阅读区（第二位：先看在读直达，其次才是编辑建议）
+  const paperBody = el('div', 'lib-zone-body');
+  // REWORK-007 §2：本人手动标记的"在读"直达行——只引用真实标记，不做任何进度统计。
+  if (v3Available()) {
+    const readingPapers = Object.entries(v3Runtime.state.papers ?? {})
+      .filter(([, rec]) => rec?.status === 'reading')
+      .map(([id]) => getPaper(renderLibrary, id))
+      .filter(Boolean);
+    if (readingPapers.length > 0) {
+      const line = el('p', 'lib-first-line');
+      line.appendChild(el('strong', 'lib-step-label', '我在读（本人标记）：'));
+      readingPapers.forEach((p, i) => {
+        if (i > 0) line.appendChild(document.createTextNode('；'));
+        line.appendChild(paperLink(p));
+      });
+      paperBody.appendChild(line);
+    }
+  }
+  // SCAFFOLD-008：带类型首读（03 §4）。typed startHere 优先；旧 startHerePaperId 只读适配。
+  const startTarget =
+    home.startHere != null
+      ? home.startHere
+      : home.startHerePaperId != null
+        ? { kind: 'paper', paperId: home.startHerePaperId }
+        : null;
+  const startResolved = startTarget ? resolveNodeTarget(renderLibrary, startTarget) : null;
+  const startHref = startTarget ? startTargetHref(startTarget) : null;
+  if (startResolved && startHref) {
+    const item = el('div', 'lib-zone-item');
+    // 01 D：材料首读的文案是「建议从这里开始」，论文首读沿用「建议先读」。
+    item.appendChild(el('p', 'lib-zone-flag', startResolved.kind === 'article' ? '建议从这里开始' : '建议先读'));
+    const title = el('p', 'lib-zone-item-title');
+    title.appendChild(link(startHref, startResolved.title));
+    item.appendChild(title);
+    if (startResolved.kind === 'paper') {
+      const startPaper = getPaper(renderLibrary, startTarget.paperId);
+      if (startPaper) item.appendChild(badgeLine(startPaper));
+    } else {
+      const meta = [startResolved.formatLabel, startResolved.depthLabel].filter(Boolean).join(' · ');
+      if (meta) item.appendChild(el('p', 'lib-depth-note', meta));
+    }
+    if (startResolved.lead) item.appendChild(el('p', 'lib-zone-item-note', startResolved.lead));
+    if (startResolved.availability === 'pending') {
+      item.appendChild(el('p', 'lib-notice-flat', `首读节点来源待核：${startResolved.pendingReason ?? '原因待补'}。`));
+    }
+    const actions = el('p', 'lib-first-line');
+    actions.appendChild(link(startHref, startResolved.kind === 'article' ? '打开导读' : '打开阅读卡'));
+    item.appendChild(actions);
+    paperBody.appendChild(item);
+  } else if (renderLibrary.papers.length === 0) {
+    paperBody.appendChild(emptyBox(EMPTY_NOTICES.papers));
+  }
+  grid.appendChild(
+    homeZone(
+      home.zones.find((z) => z.key === 'papers') ?? {
+        key: 'papers',
+        title: '论文阅读',
+        purpose: '单篇论文读到能讲清楚它解决什么、怎么做、证据支持到哪里。',
+        howToUse: '从建议先读的一篇开始，按“读到什么程度”自查。',
+        entryLabel: '打开全部论文',
+        entryHash: '#/papers',
+      },
+      paperBody,
+    ),
+  );
+
+  // 方向与路线区（第三位）：默认入口只列 active（PF-01 补）。
+  const directions = activeDirections(renderLibrary);
+  const dirBody = el('div', 'lib-zone-body');
+  if (directions.length === 0) dirBody.appendChild(emptyBox(EMPTY_NOTICES.directions));
+  for (const direction of directions) {
+    const item = el('div', 'lib-zone-item');
+    const title = el('p', 'lib-zone-item-title');
+    title.appendChild(link(buildHash('route', direction.id), direction.title));
+    item.appendChild(title);
+    if (direction.summary) item.appendChild(el('p', 'lib-zone-item-note', direction.summary));
+    dirBody.appendChild(item);
+  }
+  grid.appendChild(
+    homeZone(
+      home.zones.find((z) => z.key === 'directions') ?? {
+        key: 'directions',
+        title: '方向与路线',
+        purpose: '把“可以研究什么”变成有边界、有依据的候选，并给一条按阶段推进的阅读路线。',
+        howToUse: '先看方向说明与当前研究情况，再决定要不要按路线读。',
+        entryLabel: '查看方向',
+        entryHash: '#/directions',
+      },
+      dirBody,
+    ),
+  );
+
+  // 技术学习区（第四位）：有 featured 时按「默认三条 + 其他主干折叠」，否则沿用旧 core/advanced 列表。
+  const learnBody = el('div', 'lib-zone-body');
+  const featured = featuredTechnicalRoutes(renderLibrary);
+  if (featured.length > 0) {
+    for (const route of featured) {
+      const item = el('div', 'lib-zone-item');
+      const title = el('p', 'lib-zone-item-title');
+      title.appendChild(link(buildHash('learn', route.id), route.title));
+      item.appendChild(title);
+      const count = route.units?.length ?? 0;
+      item.appendChild(el('p', 'lib-zone-item-note', `共 ${count} 个单元。${route.summary ?? route.capability}`));
+      learnBody.appendChild(item);
+    }
+    const others = renderLibrary.technicalRoutes.filter((r) => r.kind !== 'featured');
+    if (others.length > 0) {
+      const details = el('details', 'lib-quick-group');
+      details.appendChild(el('summary', 'lib-quick-title', '其他主干（当前不必先学）'));
+      const line = el('p', 'lib-zone-adv');
+      others.forEach((route, i) => {
+        if (i > 0) line.appendChild(document.createTextNode('；'));
+        line.appendChild(link(buildHash('learn', route.id), route.title));
+      });
+      details.appendChild(line);
+      learnBody.appendChild(details);
+    }
+  } else {
+    const core = coreTechnicalRoutes(renderLibrary);
+    if (core.length === 0) learnBody.appendChild(emptyBox(EMPTY_NOTICES.learnCore));
+    for (const route of core) {
+      const item = el('div', 'lib-zone-item');
+      const title = el('p', 'lib-zone-item-title');
+      title.appendChild(link(buildHash('learn', route.id), route.title));
+      item.appendChild(title);
+      const count = route.units?.length ?? 0;
+      const state = routeStartable(renderLibrary, route) ? '已有可开始单元' : '可开始单元待补核';
+      item.appendChild(el('p', 'lib-zone-item-note', `共 ${count} 个单元，${state}。${route.prerequisites ?? ''}`));
+      learnBody.appendChild(item);
+    }
+    const advanced = advancedTechnicalRoutes(renderLibrary);
+    if (advanced.length > 0) {
+      const line = el('p', 'lib-zone-adv');
+      line.appendChild(el('span', 'lib-step-label', '按需深入：'));
+      advanced.forEach((route, i) => {
+        if (i > 0) line.appendChild(document.createTextNode('；'));
+        line.appendChild(link(buildHash('learn', route.id), route.title));
+      });
+      learnBody.appendChild(line);
+    }
+  }
+  grid.appendChild(
+    homeZone(
+      home.zones.find((z) => z.key === 'learn') ?? {
+        key: 'learn',
+        title: '技术学习',
+        purpose: '建立做 Agent 研究要用的工程与评价能力。',
+        howToUse: '不必先选题，按主干顺序学，已掌握的部分用单元自查跳过。',
+        entryLabel: '进入技术学习',
+        entryHash: '#/learn',
+      },
+      learnBody,
+    ),
+  );
+
+  // 经典书目区（原"区五"；每日精选区已按 REWORK-007 §2 移至首页第一位）
   const foundBody = el('div', 'lib-zone-body');
-  const fGroups = foundationGroups(LIBRARY);
+  const fGroups = foundationGroups(renderLibrary);
   if (fGroups.length === 0) {
     foundBody.appendChild(emptyBox('经典书目尚未接入：按主题分组的基础经典将在核查身份后显示。'));
   }
@@ -1455,9 +2177,9 @@ function renderDirections(container) {
   page.appendChild(crumb([{ text: '首页', href: '#/home' }, { text: '方向与路线' }]));
   page.appendChild(el('h2', null, '方向与路线'));
   page.appendChild(
-    el('p', 'lib-intro', '三个已批准的方向：每个都有研究对象、当前研究情况、选择理由和限制。它们是备选，不必同时推进。'),
+    el('p', 'lib-intro', '两条起步方向（另两条延后保留，旧书签仍可打开）：每个都有研究对象、当前研究情况、选择理由和限制。它们是备选，不必同时推进。'),
   );
-  const directions = sortDirections(LIBRARY);
+  const directions = activeDirections(renderLibrary);
   if (directions.length === 0) {
     page.appendChild(emptyBox(EMPTY_NOTICES.directions));
     return;
@@ -1472,12 +2194,14 @@ function renderDirections(container) {
     section.appendChild(head);
     if (direction.summary) section.appendChild(el('p', 'lib-dir-summary', direction.summary));
     if (direction.overview) section.appendChild(el('p', 'lib-dir-overview', direction.overview));
-    const entries = routeEntries(LIBRARY, direction.id);
-    const first = entries.find((e) => e.paper) ?? entries[0] ?? null;
-    if (first?.paper) {
+    // 起步第一步（新 tracks 或旧 route 回退统一经 directionTracks）。
+    const tracks = directionTracks(renderLibrary, direction);
+    const first = tracks.start.find((e) => e.resolved) ?? tracks.start[0] ?? null;
+    if (first) {
       const line = el('p', 'lib-first-line');
-      line.appendChild(el('strong', 'lib-step-label', '第一篇：'));
-      line.appendChild(paperLink(first.paper));
+      line.appendChild(el('strong', 'lib-step-label', '第一步：'));
+      if (first.resolved) line.appendChild(link(stepHref(direction.id, 'start', first), first.resolved.title));
+      else line.appendChild(el('span', 'lib-unsafe-link', `${first.kind === 'external' ? first.title : nodeTargetKey(first.target)}（关联未解析，内容待修复）`));
       section.appendChild(line);
     }
     const more = el('p', 'lib-dir-more');
@@ -1486,7 +2210,7 @@ function renderDirections(container) {
     page.appendChild(section);
   }
   // CCF 目录事实（D3 决策：并入方向页底部一句话事实 + 来源；不是投稿推荐）。
-  const ccf = LIBRARY.meta?.ccfNote;
+  const ccf = renderLibrary.meta?.ccfNote;
   if (ccf?.text) {
     const box = el('div', 'lib-sources');
     box.appendChild(el('p', 'lib-sources-title', '投稿参照（目录事实）'));
@@ -1505,7 +2229,7 @@ function renderDirections(container) {
 }
 
 function renderRoute(container, directionId) {
-  const direction = getDirection(LIBRARY, directionId);
+  const direction = getDirection(renderLibrary, directionId);
   const page = el('div', 'lib-page');
   container.appendChild(page);
   page.appendChild(
@@ -1517,6 +2241,18 @@ function renderRoute(container, directionId) {
   }
   page.appendChild(el('h2', null, direction.title));
   if (direction.summary) page.appendChild(el('p', 'lib-intro', direction.summary));
+
+  // 延后方向（01 C）：旧书签直达保留一行说明 + 谱系，不进默认入口。
+  if (directionStatusOf(direction) === 'deferred') {
+    page.appendChild(
+      el(
+        'p',
+        'lib-notice-flat',
+        direction.deferredNote ??
+          '这条方向初期不作为探索入口；论文卡仍可查阅，相关技术能力见对应技术路线。',
+      ),
+    );
+  }
 
   page.appendChild(el('h3', 'lib-block-title', '这个方向研究什么'));
   if (direction.overview) page.appendChild(el('p', 'lib-para', direction.overview));
@@ -1545,41 +2281,48 @@ function renderRoute(container, directionId) {
   page.appendChild(el('h3', 'lib-block-title', '难点与不适用条件'));
   if (direction.limits) page.appendChild(el('p', 'lib-para', direction.limits));
 
-  page.appendChild(el('h3', 'lib-block-title', '按阶段阅读'));
-  const groups = routeStages(LIBRARY, directionId);
-  if (groups.length === 0) {
-    page.appendChild(emptyBox(EMPTY_NOTICES.routeEmpty));
+  // 01 B：「初期怎么用这条」——纯文本一段，不是新板块。
+  if (direction.startHint) page.appendChild(el('p', 'lib-intro', direction.startHint));
+
+  const tracks = directionTracks(renderLibrary, direction);
+  if (tracks.mode !== 'legacy') {
+    renderRouteTracks(page, direction, tracks);
   } else {
-    // 提示按路线实际排列生成：不为匹配固定措辞而重排已批准的论文顺序。
-    page.appendChild(
-      el('p', 'lib-intro', `本路线阶段顺序：${groups.map((g) => g.stage).join(' → ')}。每步写明为什么读、什么时候读、读到什么程度；顺序以保持论文原有先后为准。`),
-    );
-    for (const group of groups) {
-      const stageBox = el('div', 'lib-stage');
-      stageBox.appendChild(el('p', 'lib-stage-label', group.stage));
-      const ol = el('ol', 'lib-steps');
-      for (const entry of group.entries) {
-        const li = el('li', 'lib-route-step');
-        const title = el('h4', 'lib-step-title');
-        if (entry.paper) title.appendChild(paperLink(entry.paper));
-        else title.appendChild(el('span', 'lib-unsafe-link', `${entry.paperId}（关联未解析，内容待修复）`));
-        li.appendChild(title);
-        const meta = el('p', 'lib-step-flags');
-        if (entry.required) meta.appendChild(el('span', 'lib-flag', entry.required));
-        const depth = deliveredDepthOf(entry.paper);
-        if (depth) meta.appendChild(el('span', 'lib-flag', DEPTH_LABELS[depth] ?? depth));
-        if (meta.childNodes.length > 0) li.appendChild(meta);
-        for (const field of ['purpose', 'readWhen', 'check']) {
-          if (!entry[field]) continue;
-          const p = el('p', 'lib-step-line');
-          p.appendChild(el('strong', 'lib-step-label', `${STEP_LABELS[field]}：`));
-          p.appendChild(document.createTextNode(entry[field]));
-          li.appendChild(p);
+    // 旧格式回退：按阶段分组的长路线（旧库行为不变）。
+    page.appendChild(el('h3', 'lib-block-title', '按阶段阅读'));
+    const groups = routeStages(renderLibrary, directionId);
+    if (groups.length === 0) {
+      page.appendChild(emptyBox(EMPTY_NOTICES.routeEmpty));
+    } else {
+      page.appendChild(
+        el('p', 'lib-intro', `本路线阶段顺序：${groups.map((g) => g.stage).join(' → ')}。每步写明为什么读、什么时候读、读到什么程度；顺序以保持论文原有先后为准。`),
+      );
+      for (const group of groups) {
+        const stageBox = el('div', 'lib-stage');
+        stageBox.appendChild(el('p', 'lib-stage-label', group.stage));
+        const ol = el('ol', 'lib-steps');
+        for (const entry of group.entries) {
+          const li = el('li', 'lib-route-step');
+          const title = el('h4', 'lib-step-title');
+          if (entry.paper) title.appendChild(paperLink(entry.paper));
+          else title.appendChild(el('span', 'lib-unsafe-link', `${entry.paperId}（关联未解析，内容待修复）`));
+          li.appendChild(title);
+          const depth = deliveredDepthOf(entry.paper);
+          const depthShort = depth ? (depth === 'entry' ? '原文入口' : DEPTH_LABELS[depth] ?? depth) : null;
+          const flagText = [entry.required, depthShort].filter(Boolean).join(' · ');
+          if (flagText) li.appendChild(el('p', 'lib-asof', flagText));
+          for (const field of ['purpose', 'readWhen', 'check']) {
+            if (!entry[field]) continue;
+            const p = el('p', 'lib-step-line');
+            p.appendChild(el('strong', 'lib-step-label', `${STEP_LABELS[field]}：`));
+            p.appendChild(document.createTextNode(entry[field]));
+            li.appendChild(p);
+          }
+          ol.appendChild(li);
         }
-        ol.appendChild(li);
+        stageBox.appendChild(ol);
+        page.appendChild(stageBox);
       }
-      stageBox.appendChild(ol);
-      page.appendChild(stageBox);
     }
   }
 
@@ -1588,6 +2331,148 @@ function renderRoute(container, directionId) {
     const ul = el('ul', 'lib-list');
     for (const question of direction.openQuestions) ul.appendChild(el('li', null, question));
     page.appendChild(ul);
+  }
+}
+
+// 新格式（tracks）的路线渲染：startRoute 为「从这里开始」，archiveRoute 折叠。
+// archive 标题取数据 archiveLabel；缺省时外链目录（全部 external）为「按需查阅（不必接着读）」，
+// 其余为「完整谱系（初期不必走）」（05 §3）。
+function renderRouteTracks(page, direction, tracks) {
+  const allExternal = tracks.archive.length > 0 && tracks.archive.every((e) => e.external);
+  const archiveLabel = direction.archiveLabel ?? (allExternal ? '按需查阅（不必接着读）' : TRACK_LABELS.archive);
+
+  const renderStepList = (entries, track) => {
+    const ol = el('ol', 'lib-steps');
+    for (const entry of entries) {
+      const li = el('li', 'lib-route-step');
+      const title = el('h4', 'lib-step-title');
+      if (entry.external) {
+        if (entry.url) title.appendChild(externalLink(entry.url, entry.title));
+        else title.appendChild(document.createTextNode(entry.title));
+      } else if (entry.resolved) {
+        title.appendChild(link(stepHref(direction.id, track, entry), entry.resolved.title));
+      } else {
+        title.appendChild(el('span', 'lib-unsafe-link', `${nodeTargetKey(entry.target) ?? entry.id}（关联未解析，内容待修复）`));
+      }
+      li.appendChild(title);
+      const flags = [];
+      if (entry.required) flags.push(entry.required);
+      if (entry.passMode) flags.push(PASS_MODE_LABELS[entry.passMode] ?? entry.passMode);
+      if (entry.resolved?.depthLabel) flags.push(entry.resolved.depthLabel);
+      if (entry.resolved?.formatLabel) flags.push(entry.resolved.formatLabel);
+      if (entry.external && entry.role) flags.push(entry.role);
+      if (entry.availability === 'pending') flags.push('待核');
+      const flagText = [...new Set(flags)].filter(Boolean).join(' · ');
+      if (flagText) li.appendChild(el('p', 'lib-asof', flagText));
+      if (entry.availability === 'pending') {
+        li.appendChild(el('p', 'lib-notice-flat', `待核：${entry.pendingReason ?? entry.resolved?.pendingReason ?? '原因待补'}。`));
+      }
+      for (const field of ['purpose', 'readWhen', 'check']) {
+        if (!entry[field]) continue;
+        const p = el('p', 'lib-step-line');
+        p.appendChild(el('strong', 'lib-step-label', `${STEP_LABELS[field]}：`));
+        p.appendChild(document.createTextNode(entry[field]));
+        li.appendChild(p);
+      }
+      if (entry.external && entry.note) li.appendChild(el('p', 'lib-step-line', entry.note));
+      if (entry.nextAction) li.appendChild(el('p', 'lib-step-line', entry.nextAction));
+      ol.appendChild(li);
+    }
+    return ol;
+  };
+
+  page.appendChild(el('h3', 'lib-block-title', TRACK_LABELS.start));
+  if (tracks.start.length === 0) {
+    page.appendChild(emptyBox(EMPTY_NOTICES.startRouteEmpty));
+  } else {
+    page.appendChild(renderStepList(tracks.start, 'start'));
+    // 02 §3 / 03 §5.4：末节点显示本段结束与行动建议，不自动进入 archive。
+    const last = tracks.start[tracks.start.length - 1];
+    if (last?.availability !== 'pending') {
+      page.appendChild(el('p', 'lib-asof', '本段到此。'));
+    }
+    if (direction.trackClosing) page.appendChild(el('p', 'lib-intro', direction.trackClosing));
+  }
+
+  const hasArchive = tracks.archive.length > 0;
+  if (hasArchive) {
+    const details = el('details', 'lib-quick-group');
+    details.appendChild(el('summary', 'lib-quick-title', archiveLabel));
+    const note = allExternal
+      ? '以下按疑问查阅，不必接着读；identity 链接只核到身份与访问。'
+      : '完整谱系初期不必走；顺序沿原路线保留。';
+    details.appendChild(el('p', 'lib-zone-how', note));
+    details.appendChild(renderStepList(tracks.archive, 'archive'));
+    page.appendChild(details);
+  }
+}
+
+// 起步卡三问（03 §1）：标题与覆盖行之后、正文之前；旧卡无 learner 不渲染（不伪填）。
+function renderLearnerBlock(article, item) {
+  const learner = item?.learner;
+  if (!learner || typeof learner !== 'object') return;
+  const box = el('section', 'lib-block');
+  const lines = [
+    ['讲什么', learner.gist],
+    ['对当前路线的价值', learner.value],
+    ['带着什么目的', learner.intent],
+  ];
+  for (const [label, text] of lines) {
+    if (!text) continue;
+    const p = el('p', 'lib-step-line');
+    p.appendChild(el('strong', 'lib-step-label', `${label}：`));
+    p.appendChild(document.createTextNode(text));
+    box.appendChild(p);
+  }
+  if (box.childNodes.length > 0) article.appendChild(box);
+}
+
+// 章节动作（03 §2）：Preserve / Explain / Skip 顺序文本列表；inline blocks 直接渲染，
+// sectionId 用与目录相同的滚动定位（不改写 hash）；空列表不显示标题。
+function renderReadingActionsBlock(article, item, anchorPrefix, kind = 'paper') {
+  const ra = item?.readingActions;
+  if (!ra || typeof ra !== 'object') return;
+  // 站内导读没有外部原文：Preserve 标题随媒介区分（审查修正，2026-09-22）。
+  const sections = [
+    ['preserve', kind === 'article' ? '先自己阅读' : '先自己看原文'],
+    ['explain', '可以先看整理'],
+    ['skip', '本次先跳过'],
+  ];
+  for (const [key, title] of sections) {
+    const list = ra[key];
+    if (!Array.isArray(list) || list.length === 0) continue;
+    const box = el('section', 'lib-block');
+    box.appendChild(el('h3', 'lib-block-title', title));
+    const ul = el('ul', 'lib-list');
+    for (const act of list) {
+      const li = el('li');
+      const head = el('p', 'lib-step-line');
+      head.appendChild(el('strong', null, `${act.target} —— `));
+      head.appendChild(document.createTextNode(act.why));
+      li.appendChild(head);
+      if (key === 'explain') {
+        if (Array.isArray(act.blocks) && act.blocks.length > 0) {
+          const inner = el('div', 'lib-action-explain');
+          renderBlocks(inner, act.blocks);
+          li.appendChild(inner);
+        } else if (act.sectionId) {
+          const targetId = `${anchorPrefix}-${act.sectionId}`;
+          const p = el('p', 'lib-first-line');
+          // 与目录按钮同款的页内滚动定位，但不用 lib-toc-link 类，避免被目录收集逻辑混淆。
+          const button = el('button', 'lib-btn', '定位到本卡的对应讲解段落');
+          button.type = 'button';
+          button.addEventListener('click', () => {
+            const target = document.getElementById(targetId);
+            if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          });
+          p.appendChild(button);
+          li.appendChild(p);
+        }
+      }
+      ul.appendChild(li);
+    }
+    box.appendChild(ul);
+    article.appendChild(box);
   }
 }
 
@@ -1626,14 +2511,14 @@ function renderPapers(container) {
   page.appendChild(actions);
   const storageNotice = v3StorageNotice();
   if (storageNotice) page.appendChild(storageNotice);
-  if (LIBRARY.papers.length === 0) {
+  if (renderLibrary.papers.length === 0) {
     page.appendChild(emptyBox(EMPTY_NOTICES.papers));
     return;
   }
   // 分组：方向路线文献（按方向顺序）→ 路线外条目；经典书目独立视图，这里只给入口。
   const routed = new Set();
-  for (const direction of sortDirections(LIBRARY)) {
-    const entries = routeEntries(LIBRARY, direction.id).filter((e) => e.paper);
+  for (const direction of sortDirections(renderLibrary)) {
+    const entries = routeEntries(renderLibrary, direction.id).filter((e) => e.paper);
     if (entries.length === 0) continue;
     const groupBox = el('div', 'lib-paper-group');
     groupBox.appendChild(el('h3', 'lib-block-title', `方向${direction.order} · ${direction.title}`));
@@ -1648,7 +2533,7 @@ function renderPapers(container) {
       page.appendChild(groupBox);
     }
   }
-  const unrouted = LIBRARY.papers.filter((p) => !routed.has(p.id) && p.collection !== 'foundations');
+  const unrouted = renderLibrary.papers.filter((p) => !routed.has(p.id) && p.collection !== 'foundations');
   if (unrouted.length > 0) {
     const groupBox = el('div', 'lib-paper-group');
     groupBox.appendChild(el('h3', 'lib-block-title', '支线与路线外'));
@@ -1665,9 +2550,7 @@ function paperHeader(paper) {
   wrap.appendChild(el('h2', 'lib-paper-heading', paper.title));
   if (paper.displayTitle) wrap.appendChild(el('p', 'lib-paper-subtitle', paper.displayTitle));
   const meta = el('p', 'lib-metaline');
-  for (const badge of paperBadges(paper)) {
-    meta.appendChild(el('span', `lib-badge${['deep', 'standard'].includes(badge.kind) ? ' lib-badge-kind' : ''}`, badge.text));
-  }
+  meta.appendChild(document.createTextNode(paperBadges(paper).map((b) => b.text).join(' · ')));
   const source = paperSourceLink(paper);
   if (source) {
     const a = link(source.href, `论文原文 · ${source.host}`, 'lib-orig');
@@ -1706,7 +2589,7 @@ function renderReferences(article, paper) {
     for (const ref of citations) {
       const li = el('li');
       if (ref.paperId) {
-        const paper = getPaper(LIBRARY, ref.paperId);
+        const paper = getPaper(renderLibrary, ref.paperId);
         if (paper) li.appendChild(paperLink(paper));
         else li.appendChild(el('span', 'lib-unsafe-link', `${ref.paperId}（关联未接入）`));
       } else if (ref.label) {
@@ -1724,7 +2607,7 @@ function renderReferences(article, paper) {
     for (const ref of editorial) {
       const li = el('li');
       if (ref.paperId) {
-        const paper = getPaper(LIBRARY, ref.paperId);
+        const paper = getPaper(renderLibrary, ref.paperId);
         if (paper) li.appendChild(paperLink(paper));
         else li.appendChild(el('span', 'lib-unsafe-link', `${ref.paperId}（关联未接入）`));
       } else if (ref.label) {
@@ -1765,19 +2648,23 @@ function stringList(article, id, heading, items) {
   article.appendChild(box);
 }
 
-function renderNext(article, paper) {
+function renderNext(article, paper, routeNextKey = null) {
   if (!paper.next?.note) return;
+  // 03 §5.3：旧 paper.next 仅作「延伸阅读（非本段下一步）」；与路线下一节点相同时去重链接
+  // （路线导航已覆盖，不再给竞争按钮），保留说明文字，保证目录与正文始终同源。
+  const duplicated = routeNextKey && paper.next.paperId && nodeTargetKey({ kind: 'paper', paperId: paper.next.paperId }) === routeNextKey;
   const box = el('section', 'lib-block');
   box.id = 'lib-sec-next';
   box.appendChild(el('h3', 'lib-block-title', sectionTitle(deliveredDepthOf(paper), 'next')));
   box.appendChild(el('p', 'lib-para', paper.next.note));
-  if (paper.next.paperId) {
-    const nextPaper = getPaper(LIBRARY, paper.next.paperId);
+  box.appendChild(el('p', 'lib-asof', '延伸阅读是整理者建议，不是本路线的下一步。'));
+  if (duplicated) {
+    box.appendChild(el('p', 'lib-muted', '本条与路线下一节点相同，链接已在侧栏路线导航给出，此处不再重复。'));
+  } else if (paper.next.paperId) {
+    const nextPaper = getPaper(renderLibrary, paper.next.paperId);
     if (nextPaper) {
       const nav = el('p', 'lib-actions');
-      nav.appendChild(
-        link(buildHash('paper', nextPaper.id), `打开《${nextPaper.displayTitle || nextPaper.title}》`, 'lib-btn lib-btn-primary'),
-      );
+      nav.appendChild(link(buildHash('paper', nextPaper.id), `延伸阅读：《${nextPaper.displayTitle || nextPaper.title}》`, 'lib-btn'));
       box.appendChild(nav);
     }
   }
@@ -1828,23 +2715,29 @@ function renderRail(page, paper, positions, source) {
     const block = el('div', 'lib-rail-block');
     block.appendChild(el('p', 'lib-rail-label', '在路线中的位置'));
     for (const position of positions) {
-      block.appendChild(el('p', 'lib-rail-pos', `《${position.direction.title}》第 ${position.index} / ${position.total} 篇`));
+      const trackNote = position.track === 'archive' ? '完整谱系' : '从这里开始';
+      block.appendChild(el('p', 'lib-rail-pos', `《${position.direction.title}》第 ${position.index} / ${position.total} 步（${trackNote}）`));
       const prevLine = el('p', 'lib-rail-line');
-      if (position.prev?.paper) {
+      if (position.prev && !position.prev.external && position.prev.resolved) {
         prevLine.appendChild(
-          link(buildHash('paper', position.prev.paper.id), `上一篇：《${position.prev.paper.displayTitle || position.prev.paper.title}》`),
+          link(stepHref(position.direction.id, position.track, position.prev), `上一步：《${position.prev.resolved.title}》`),
         );
+      } else if (position.prev?.external) {
+        prevLine.appendChild(el('span', 'lib-muted', '上一步是外链目录条目'));
       } else {
-        prevLine.appendChild(el('span', 'lib-muted', '这是第一篇'));
+        prevLine.appendChild(el('span', 'lib-muted', '这是第一步'));
       }
       block.appendChild(prevLine);
       const nextLine = el('p', 'lib-rail-line');
-      if (position.next?.paper) {
+      if (position.next && !position.next.external && position.next.resolved) {
         nextLine.appendChild(
-          link(buildHash('paper', position.next.paper.id), `下一篇：《${position.next.paper.displayTitle || position.next.paper.title}》`),
+          link(stepHref(position.direction.id, position.track, position.next), `下一步：《${position.next.resolved.title}》`),
         );
+      } else if (position.next?.external) {
+        nextLine.appendChild(el('span', 'lib-muted', '下一步是外链目录条目'));
       } else {
-        nextLine.appendChild(el('span', 'lib-muted', '已是本路线最后一篇'));
+        // 03 §5.4：尾节点显示「本段到此」，不自动进入 archive。
+        nextLine.appendChild(el('span', 'lib-muted', '本段到此'));
       }
       block.appendChild(nextLine);
       const backLine = el('p', 'lib-rail-line');
@@ -1857,12 +2750,34 @@ function renderRail(page, paper, positions, source) {
   else page.classList.add('lib-reading-solo');
 }
 
-function renderPaper(container, paperId) {
-  const paper = getPaper(LIBRARY, paperId);
-  const positions = routesContaining(LIBRARY, paperId);
+function renderPaper(container, paperId, ctx = {}) {
+  const paper = getPaper(renderLibrary, paperId);
+  // 路线上下文（03 §5）：显式 query 优先；上下文与本文不匹配时明确提示，不静默套其他路线；
+  // 无上下文的旧链接唯一属于 active startRoute 时推导起步上下文。
+  let routeCtx = null;
+  let ctxNotice = null;
+  if (ctx.routeId && ctx.track) {
+    const pos = trackPosition(renderLibrary, ctx.routeId, ctx.track, { kind: 'paper', paperId });
+    if (pos) {
+      routeCtx = pos;
+    } else {
+      ctxNotice = '链接携带的路线上下文与本文不匹配，已按无路线上下文显示；请在路线页重新进入。';
+    }
+  }
+  if (!routeCtx && !ctxNotice) {
+    const inferred = inferStartContext(renderLibrary, { kind: 'paper', paperId });
+    if (inferred) routeCtx = trackPosition(renderLibrary, inferred.routeId, inferred.track, { kind: 'paper', paperId });
+  }
+  const positions = routeCtx
+    ? [routeCtx]
+    : routesContaining(renderLibrary, paperId);
   const crumbParts = [{ text: '首页', href: '#/home' }, { text: '论文阅读', href: '#/papers' }];
-  for (const position of positions) {
-    crumbParts.push({ text: position.direction.title, href: buildHash('route', position.direction.id) });
+  if (routeCtx) {
+    crumbParts.push({ text: routeCtx.direction.title, href: buildHash('route', routeCtx.direction.id) });
+  } else {
+    for (const position of positions.slice(0, 2)) {
+      crumbParts.push({ text: position.direction.title, href: buildHash('route', position.direction.id) });
+    }
   }
   container.appendChild(crumb(crumbParts));
 
@@ -1880,7 +2795,10 @@ function renderPaper(container, paperId) {
   page.classList.add(`lib-paper-${depth ?? 'entry'}`);
   const source = paperSourceLink(paper);
   article.appendChild(paperHeader(paper));
-  article.appendChild(renderNotesPanel(paper));
+  if (ctxNotice) article.appendChild(el('p', 'lib-notice-flat', ctxNotice));
+
+  // 起步卡三问（03 §1）：覆盖短行之后、正文之前；旧卡无 learner 不渲染。
+  renderLearnerBlock(article, paper);
 
   if (depth === 'deep') {
     if (Array.isArray(paper.overview) && paper.overview.length > 0) {
@@ -1900,7 +2818,6 @@ function renderPaper(container, paperId) {
     renderReferences(article, paper);
     stringList(article, 'lib-sec-open', sectionTitle(depth, 'openQuestions'), paper.openQuestions);
     stringList(article, 'lib-sec-questions', sectionTitle(depth, 'questions'), paper.questions);
-    renderNext(article, paper);
   } else if (depth === 'standard') {
     if (paper.lead) article.appendChild(el('p', 'lib-lead', paper.lead));
     stringList(article, 'lib-sec-reasons', sectionTitle(depth, 'reasons'), paper.reasons);
@@ -1913,26 +2830,191 @@ function renderPaper(container, paperId) {
     }
     stringList(article, 'lib-sec-deep', sectionTitle(depth, 'deepRead'), paper.deepRead);
     stringList(article, 'lib-sec-questions', sectionTitle(depth, 'questions'), paper.questions);
-    renderNext(article, paper);
   } else if (depth === 'quick') {
+    // REWORK-007 §4 + 008.1 §2C：卡级依据标注按 coverage 实际口径生成（共同函数 depthBasisLabel）。
+    const partialText = paper.coverage?.mode === 'partial-text';
     article.appendChild(
-      el('p', 'lib-notice-flat', '这篇只依据摘要做过判断，正文还没有读，所以没有正文整理；依据与没读到的部分见下方“来源与覆盖”。'),
+      el(
+        'p',
+        'lib-depth-note',
+        partialText
+          ? '简读卡：以下判断依据已核摘要与指定正文（范围见文末「来源与覆盖」），其余部分未读、不作判断。'
+          : '以下判断只依据摘要，正文没有读；依据与未核对部分见文末“来源与覆盖”。',
+      ),
     );
     if (paper.lead) article.appendChild(el('p', 'lib-lead', paper.lead));
     stringList(article, 'lib-sec-reasons', sectionTitle(depth, 'reasons'), paper.reasons);
     stringList(article, 'lib-sec-questions', sectionTitle(depth, 'questions'), paper.questions);
-    renderNext(article, paper);
   } else {
     article.appendChild(
-      el('p', 'lib-notice-flat', '这篇还没有获取摘要，这里只提供论文本身的线索，没有任何内容判断；请从上方“论文原文”核对原文，再决定投入多少时间。'),
+      el('p', 'lib-depth-note', '未获取到可靠摘要：这里只有论文身份与入口，不含任何内容判断；请核对原文后再决定投入。'),
     );
     if (paper.lead) article.appendChild(el('p', 'lib-lead', paper.lead));
     stringList(article, 'lib-sec-reasons', sectionTitle(depth, 'reasons'), paper.reasons);
-    renderNext(article, paper);
   }
 
+  // 章节动作（03 §2）：正文之后、记录面板之前。
+  renderReadingActionsBlock(article, paper, `lib-sec-${paper.id}`);
+
+  // 旧 paper.next 降为延伸阅读（03 §5.3），与路线下一节点相同则去重。
+  const routeNextKey = routeCtx?.next && !routeCtx.next.external ? nodeTargetKey(routeCtx.next.target) : null;
+  renderNext(article, paper, routeNextKey);
+
+  // REWORK-007 §1：记录是读后动作——面板放在正文全部章节（含"延伸阅读"）之后、"来源与覆盖"之前。
+  // 存储仍用原 paperId；route/track query 不参与记录 id（03 §6）。
+  article.appendChild(renderNotesPanel(paper));
   renderCoverage(article, paper);
   renderRail(page, paper, positions, source);
+}
+
+// ---------- 材料（SCAFFOLD-008；03 §3/§6：只读、无个人记录、无 localStorage 写入） ----------
+
+function materialCoverageRows(material) {
+  const c = material.coverage ?? {};
+  const rows = [];
+  if (c.mode) rows.push(['依据', MATERIAL_COVERAGE_LABELS[c.mode] ?? c.mode]);
+  if (c.basis) rows.push(['来源', c.basis]);
+  if (c.version) rows.push(['版本', c.version]);
+  if (Array.isArray(c.sections) && c.sections.length > 0) rows.push(['实际覆盖', c.sections.join('；')]);
+  if (c.limitations) rows.push(['未覆盖', c.limitations]);
+  if (c.checkedAt) rows.push(['整理时间', c.checkedAt]);
+  return rows;
+}
+
+function renderMaterial(container, materialId, ctx = {}) {
+  const material = getMaterial(renderLibrary, materialId);
+  // 路线上下文解析与论文页同规则（03 §5）。
+  let routeCtx = null;
+  let ctxNotice = null;
+  if (ctx.routeId && ctx.track) {
+    const pos = trackPosition(renderLibrary, ctx.routeId, ctx.track, { kind: 'article', materialId });
+    if (pos) routeCtx = pos;
+    else ctxNotice = '链接携带的路线上下文与本文不匹配，已按无路线上下文显示；请在路线页重新进入。';
+  }
+  if (!routeCtx && !ctxNotice) {
+    const inferred = inferStartContext(renderLibrary, { kind: 'article', materialId });
+    if (inferred) routeCtx = trackPosition(renderLibrary, inferred.routeId, inferred.track, { kind: 'article', materialId });
+  }
+  const positions = routeCtx ? [routeCtx] : targetPositions(renderLibrary, { kind: 'article', materialId });
+
+  const crumbParts = [{ text: '首页', href: '#/home' }];
+  if (routeCtx) crumbParts.push({ text: routeCtx.direction.title, href: buildHash('route', routeCtx.direction.id) });
+  crumbParts.push({ text: material ? material.title : materialId });
+  container.appendChild(crumb(crumbParts));
+
+  const page = el('div', 'lib-reading');
+  const article = el('article', 'lib-article');
+  container.appendChild(page);
+  page.appendChild(article);
+  if (!material) {
+    article.appendChild(notFoundBox('材料', materialId));
+    page.classList.add('lib-reading-solo');
+    return;
+  }
+
+  // 页眉：标题 + 媒介/依据行 + 外链。
+  const header = el('header', 'lib-paper-head');
+  header.appendChild(el('h2', 'lib-paper-heading', material.title));
+  const meta = el('p', 'lib-metaline');
+  meta.appendChild(document.createTextNode(MATERIAL_FORMAT_LABELS[material.format] ?? material.format ?? '材料'));
+  const coverageMode = material.coverage?.mode;
+  if (coverageMode) meta.appendChild(document.createTextNode(` · ${MATERIAL_COVERAGE_LABELS[coverageMode] ?? coverageMode}`));
+  const href = safeExternalHref(material.url);
+  if (href) {
+    let host = href;
+    try {
+      host = new URL(href).host;
+    } catch {
+      // 保留完整 url
+    }
+    const a = link(href, `原文 · ${host}`, 'lib-orig');
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    meta.appendChild(a);
+  }
+  header.appendChild(meta);
+  article.appendChild(header);
+  if (ctxNotice) article.appendChild(el('p', 'lib-notice-flat', ctxNotice));
+
+  const pending = material.availability === 'pending' || coverageMode === 'identity';
+  if (pending) {
+    // 待核材料只显示身份与待核原因，不伪造三问与动作（03 §1）。
+    article.appendChild(
+      el('p', 'lib-notice-flat', `来源待核：${material.pendingReason ?? material.coverage?.limitations ?? '原因待补'}。此条保留序位，暂不作为可开始内容。`),
+    );
+  } else {
+    renderLearnerBlock(article, material);
+    renderReadingActionsBlock(article, material, `lib-sec-mat-${material.id}`, 'article');
+    if (Array.isArray(material.body?.blocks) && material.body.blocks.length > 0) {
+      article.appendChild(blockSection('正文', material.body.blocks, null));
+    }
+    for (const section of material.sections ?? []) {
+      const box = el('section', 'lib-section');
+      box.id = sectionAnchorId(material.id, section.id);
+      box.appendChild(el('h3', 'lib-block-title', section.heading));
+      renderBlocks(box, section.blocks);
+      article.appendChild(box);
+    }
+    if (material.nextAction) article.appendChild(el('p', 'lib-intro', material.nextAction));
+  }
+
+  // 来源与覆盖（材料无「我的记录」面板：03 §6 存储边界）。
+  const details = el('details', 'lib-coverage');
+  details.appendChild(el('summary', null, '来源与覆盖（点开查看）'));
+  const rows = materialCoverageRows(material);
+  if (rows.length > 0) {
+    const dl = el('dl', 'lib-coverage-list');
+    for (const [label, value] of rows) {
+      dl.appendChild(el('dt', null, label));
+      dl.appendChild(el('dd', null, value));
+    }
+    details.appendChild(dl);
+  }
+  article.appendChild(details);
+
+  // 侧栏：原文 + 路线位置（与论文页同规则；无记录面板）。
+  const rail = el('aside', 'lib-rail');
+  if (href) {
+    const block = el('div', 'lib-rail-block');
+    block.appendChild(el('p', 'lib-rail-label', '原文'));
+    const a = link(href, material.url, 'lib-rail-line');
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    block.appendChild(a);
+    rail.appendChild(block);
+  }
+  if (positions.length > 0) {
+    const block = el('div', 'lib-rail-block');
+    block.appendChild(el('p', 'lib-rail-label', '在路线中的位置'));
+    for (const position of positions) {
+      const trackNote = position.track === 'archive' ? '完整谱系' : '从这里开始';
+      block.appendChild(el('p', 'lib-rail-pos', `《${position.direction.title}》第 ${position.index} / ${position.total} 步（${trackNote}）`));
+      const prevLine = el('p', 'lib-rail-line');
+      if (position.prev && !position.prev.external && position.prev.resolved) {
+        prevLine.appendChild(link(stepHref(position.direction.id, position.track, position.prev), `上一步：《${position.prev.resolved.title}》`));
+      } else if (position.prev?.external) {
+        prevLine.appendChild(el('span', 'lib-muted', '上一步是外链目录条目'));
+      } else {
+        prevLine.appendChild(el('span', 'lib-muted', '这是第一步'));
+      }
+      block.appendChild(prevLine);
+      const nextLine = el('p', 'lib-rail-line');
+      if (position.next && !position.next.external && position.next.resolved) {
+        nextLine.appendChild(link(stepHref(position.direction.id, position.track, position.next), `下一步：《${position.next.resolved.title}》`));
+      } else if (position.next?.external) {
+        nextLine.appendChild(el('span', 'lib-muted', '下一步是外链目录条目'));
+      } else {
+        nextLine.appendChild(el('span', 'lib-muted', '本段到此'));
+      }
+      block.appendChild(nextLine);
+      const backLine = el('p', 'lib-rail-line');
+      backLine.appendChild(link(buildHash('route', position.direction.id), '返回路线'));
+      block.appendChild(backLine);
+    }
+    rail.appendChild(block);
+  }
+  if (rail.childNodes.length > 0) page.appendChild(rail);
+  else page.classList.add('lib-reading-solo');
 }
 
 // ---------- 经典书目 ----------
@@ -1943,12 +3025,12 @@ function renderFoundations(container) {
   page.appendChild(crumb([{ text: '首页', href: '#/home' }, { text: '经典书目' }]));
   page.appendChild(el('h2', null, '经典书目'));
   page.appendChild(
-    el('p', 'lib-intro', LIBRARY.foundations?.intro ?? '不绑定方向的基础经典。'),
+    el('p', 'lib-intro', renderLibrary.foundations?.intro ?? '不绑定方向的基础经典。'),
   );
   page.appendChild(
     el('p', 'lib-notice-flat', '这些卡当前都是摘要级判断：身份经 2026-09-15 逐页核查，正文还没有读；建议投入（精读/重点理解）不等于已经读到那个深度。'),
   );
-  const groups = foundationGroups(LIBRARY);
+  const groups = foundationGroups(renderLibrary);
   if (groups.length === 0) {
     page.appendChild(emptyBox('经典书目尚未接入：按主题分组的基础经典将在核查身份后显示，不编造条目。'));
     return;
@@ -1996,32 +3078,57 @@ function technicalRouteCard(route) {
   meta.appendChild(document.createTextNode(route.prerequisites ?? '无特别先修'));
   card.appendChild(meta);
   card.appendChild(el('p', 'lib-tech-note', `适用：${route.applicability ?? '—'}`));
-  if (route.kind === 'core' && !routeStartable(LIBRARY, route)) {
+  if (route.kind === 'core' && !routeStartable(renderLibrary, route)) {
     card.appendChild(el('p', 'lib-tech-warn', '可开始单元待补核：当前没有已核查到章节且访问条件明确的主资源。'));
   }
   return card;
 }
 
-function renderLearn(container, routeId = null) {
+function renderLearn(container, routeId = null, ctx = {}) {
   const page = el('div', 'lib-page');
   container.appendChild(page);
   page.appendChild(crumb([{ text: '首页', href: '#/home' }, { text: '技术学习', href: '#/learn' }]));
   page.appendChild(el('h2', null, '技术学习'));
+  const featured = featuredTechnicalRoutes(renderLibrary);
+  // 05 §4：有 featured 后按默认三条呈现；不再使用旧的「六条必学主干」课表文案。
   page.appendChild(
-    el('p', 'lib-intro', '技术学习不要求先选定论文方向。六条必学主干按能力组织，每条给出单元、主资源、自查与何时跳过；方向相关的深入内容放在按需支线。'),
+    el(
+      'p',
+      'lib-intro',
+      featured.length > 0
+        ? '默认三条技术路线：多智能体架构（主）、RAG / 检索记忆（按需）、图（浅尝）。不要求先选定论文方向，也不必先学完其他主干；其余技术路线折叠在下方，当前不必先学。'
+        : '技术学习不要求先选定论文方向。六条必学主干按能力组织，每条给出单元、主资源、自查与何时跳过；方向相关的深入内容放在按需支线。',
+    ),
   );
-  const core = coreTechnicalRoutes(LIBRARY);
-  const advanced = advancedTechnicalRoutes(LIBRARY);
-  if (core.length === 0 && advanced.length === 0) {
+  const core = coreTechnicalRoutes(renderLibrary);
+  const advanced = advancedTechnicalRoutes(renderLibrary);
+  if (core.length === 0 && advanced.length === 0 && featured.length === 0) {
     page.appendChild(emptyBox(EMPTY_NOTICES.technicalRoutes));
     return;
   }
 
   if (routeId !== null) {
-    const route = getTechnicalRoute(LIBRARY, routeId);
+    const route = getTechnicalRoute(renderLibrary, routeId);
     if (!route) {
       page.appendChild(notFoundBox('技术路线', routeId));
       return;
+    }
+    // 03 §5：learn 带 route/track 时须有 unit，且该单元是此步骤的目标；unit 可单独深链。
+    let unitNotice = null;
+    let anchorUnit = null;
+    if (ctx.unitId) {
+      anchorUnit = (route.units ?? []).find((u) => u.id === ctx.unitId) ?? null;
+      if (!anchorUnit) {
+        unitNotice = `链接指定的单元 ${ctx.unitId} 不在路线「${route.title}」中；已显示路线全部单元。`;
+      } else if (ctx.routeId && ctx.track) {
+        const stepPos = trackPosition(renderLibrary, ctx.routeId, ctx.track, {
+          kind: 'unit',
+          unitRef: { routeId: route.id, unitId: ctx.unitId },
+        });
+        if (!stepPos) {
+          unitNotice = `单元 ${ctx.unitId} 不是该路线步骤的目标；已仅按单元定位。`;
+        }
+      }
     }
     page.appendChild(el('h3', 'lib-tech-title', route.title));
     page.appendChild(el('p', 'lib-tech-capability', route.capability));
@@ -2042,28 +3149,36 @@ function renderLearn(container, routeId = null) {
       p.appendChild(el('strong', 'lib-step-label', '关联论文：'));
       route.relatedPaperIds.forEach((paperId, i) => {
         if (i > 0) p.appendChild(document.createTextNode('；'));
-        const paper = getPaper(LIBRARY, paperId);
+        const paper = getPaper(renderLibrary, paperId);
         if (paper) p.appendChild(paperLink(paper));
         else p.appendChild(el('span', 'lib-unsafe-link', `${paperId}（关联未接入）`));
       });
       page.appendChild(p);
     }
+    if (unitNotice) page.appendChild(el('p', 'lib-notice-flat', unitNotice));
 
     if ((route.units ?? []).length > 0) {
       page.appendChild(el('h3', 'lib-block-title', '单元目录'));
       const ol = el('ol', 'lib-steps');
       for (const unit of route.units) {
         const li = el('li', 'lib-route-step');
-        li.appendChild(el('h4', 'lib-step-title', unit.title));
+        const title = el('h4', 'lib-step-title');
+        title.appendChild(link(`${buildHash('learn', route.id)}?unit=${encodeURIComponent(unit.id)}`, unit.title));
+        li.appendChild(title);
         if (unit.goal) li.appendChild(el('p', 'lib-step-line', unit.goal));
+        if (unit.availability === 'pending') li.appendChild(el('p', 'lib-asof', '待核'));
         ol.appendChild(li);
       }
       page.appendChild(ol);
 
       for (const unit of route.units) {
         const box = el('section', 'lib-unit');
+        box.id = `lib-unit-${unit.id}`;
         box.appendChild(el('h3', 'lib-block-title', unit.title));
         box.appendChild(el('p', 'lib-para', unit.goal));
+        if (unit.availability === 'pending') {
+          box.appendChild(el('p', 'lib-notice-flat', `本单元待核：${unit.pendingReason ?? '原因待补'}；暂不作为可开始内容。`));
+        }
         if (unit.focus) {
           const p = el('p', 'lib-step-line');
           p.appendChild(el('strong', 'lib-step-label', '读什么：'));
@@ -2073,7 +3188,22 @@ function renderLearn(container, routeId = null) {
         const { primary, supplement } = unitResources(route, unit);
         if (primary) box.appendChild(resourceLine(primary, '主资源'));
         if (supplement) box.appendChild(resourceLine(supplement, '补充'));
-        if (!primary && !supplement) box.appendChild(el('p', 'lib-notice-flat', '本单元还没有已登记的可开始资源。'));
+        // 编辑课单元（04 §4）：非空 lesson.blocks 且 resourceIds=[]；两种都空时明确提示。
+        if (Array.isArray(unit.lesson?.blocks) && unit.lesson.blocks.length > 0) {
+          renderBlocks(box, unit.lesson.blocks);
+        }
+        if (!primary && !supplement && !(Array.isArray(unit.lesson?.blocks) && unit.lesson.blocks.length > 0)) {
+          box.appendChild(el('p', 'lib-notice-flat', '本单元还没有已登记的可开始资源。'));
+        }
+        // 多智能体教材链接（04 §2.1）：精确路径 + 章节提示；普通同源链接，不解析执行。
+        if (unit.labPath) {
+          const p = el('p', 'lib-first-line');
+          const a = link(unit.labPath, '打开/下载教材', 'lib-btn');
+          a.setAttribute('download', '');
+          p.appendChild(a);
+          if (unit.labSection) p.appendChild(el('span', 'lib-res-meta', `（本节对应教材章节 ${unit.labSection}）`));
+          box.appendChild(p);
+        }
         for (const [label, value] of [
           ['先修', unit.prerequisites],
           ['自查', unit.selfCheck],
@@ -2091,7 +3221,7 @@ function renderLearn(container, routeId = null) {
           p.appendChild(el('strong', 'lib-step-label', '关联论文：'));
           unit.relatedPaperIds.forEach((paperId, i) => {
             if (i > 0) p.appendChild(document.createTextNode('；'));
-            const paper = getPaper(LIBRARY, paperId);
+            const paper = getPaper(renderLibrary, paperId);
             if (paper) p.appendChild(paperLink(paper));
             else p.appendChild(el('span', 'lib-unsafe-link', `${paperId}（关联未接入）`));
           });
@@ -2099,12 +3229,17 @@ function renderLearn(container, routeId = null) {
         }
         page.appendChild(box);
       }
+      // 单元深链定位（03 §5）：不改动 location.hash，只做页内滚动。
+      if (anchorUnit && typeof document !== 'undefined') {
+        const target = document.getElementById(`lib-unit-${anchorUnit.id}`);
+        if (target && typeof target.scrollIntoView === 'function') target.scrollIntoView({ block: 'start' });
+      }
     } else if (route.kind === 'advanced') {
       page.appendChild(el('p', 'lib-notice-flat', '这条是按需支线：先按关联论文或对应主干学习，再决定是否深入。'));
       if (Array.isArray(route.relatedPaperIds) && route.relatedPaperIds.length > 0) {
         const ol = el('ol', 'lib-steps');
         for (const paperId of route.relatedPaperIds) {
-          const paper = getPaper(LIBRARY, paperId);
+          const paper = getPaper(renderLibrary, paperId);
           const li = el('li', 'lib-route-step');
           if (paper) {
             const h = el('h4', 'lib-step-title');
@@ -2118,6 +3253,19 @@ function renderLearn(container, routeId = null) {
         }
         page.appendChild(ol);
       }
+    }
+    return;
+  }
+
+  if (featured.length > 0) {
+    page.appendChild(el('h3', 'lib-block-title', '默认三条'));
+    for (const route of featured) page.appendChild(technicalRouteCard(route));
+    const others = renderLibrary.technicalRoutes.filter((r) => r.kind !== 'featured');
+    if (others.length > 0) {
+      const details = el('details', 'lib-quick-group');
+      details.appendChild(el('summary', 'lib-quick-title', '其他主干（当前不必先学）'));
+      for (const route of others) details.appendChild(technicalRouteCard(route));
+      page.appendChild(details);
     }
     return;
   }
@@ -2142,11 +3290,11 @@ function briefPanel(brief) {
   for (const item of brief.items) {
     const li = el('li', 'lib-brief-item');
     const title = el('p', 'lib-brief-item-title');
-    const target = briefItemTarget(LIBRARY, item);
+    const target = briefItemTarget(renderLibrary, item);
     if (target?.kind === 'paper') {
-      title.appendChild(paperLink(getPaper(LIBRARY, target.paperId)));
+      title.appendChild(paperLink(getPaper(renderLibrary, target.paperId)));
     } else if (target?.kind === 'external') {
-      title.appendChild(externalLink(target.href, item.source));
+      title.appendChild(externalLink(target.href, briefSourceLabel(item, target.href)));
     } else if (target?.kind === 'missing-paper') {
       title.appendChild(el('span', 'lib-unsafe-link', `${item.paperId}（关联论文未接入，内容待修复）`));
     } else if (target?.kind === 'unsafe-source') {
@@ -2203,8 +3351,9 @@ function renderDiscoverItem(item) {
 function renderDiscoverSection() {
   const box = el('section', 'lib-discover');
   box.appendChild(el('h3', 'lib-block-title', '近期登记发现（实时查询）'));
+  // REWORK-007 §4：说明段砍半——"登记≠发表、失败不冒充、不入库"由查询结果区逐次如实呈现，不在面板顶重述。
   box.appendChild(
-    el('p', 'lib-intro', '点下面的主题才会向本机服务发起一次 Crossref 查询（最近 7 个 UTC 日登记）。近期登记不等于近期发表；失败、超时或限额都会明说，不会用旧数据冒充。动态条目只读，不会进入阅读库，也不会写入你的任何记录。'),
+    el('p', 'lib-intro', '点主题才向本机服务查询一次 Crossref（最近 7 个 UTC 日登记）；结果不入库、不写记录。'),
   );
   const topicLine = el('p', 'lib-actions');
   const resultBox = el('div', 'lib-discover-result');
@@ -2255,34 +3404,36 @@ function renderBrief(container, briefId = null) {
   page.appendChild(crumb([{ text: '首页', href: '#/home' }, { text: '每日精选', href: '#/brief' }]));
   page.appendChild(el('h2', null, '每日精选'));
   page.appendChild(
-    el('p', 'lib-intro', '这里是工作日更新的定向挑选：每期由每日论文漏斗实际产出，少量论文每条写明挑选理由；整理日期与论文发表日期分开标注，缺日即当日未产出，不补写。'),
+    el('p', 'lib-intro', '这里是工作日更新的定向挑选：每期由每日论文漏斗实际产出，用于感知相关/前沿工作在做什么、用了什么方法——不是今天的阅读作业，通常无需读正文；少量论文每条写明挑选理由；整理日期与论文发表日期分开标注，缺日即当日未产出，不补写。'),
   );
-  if (LIBRARY.briefs.length === 0) {
+  if (renderLibrary.briefs.length === 0) {
     page.appendChild(emptyBox(EMPTY_NOTICES.briefs));
     return;
   }
-  page.appendChild(renderDiscoverSection());
+  // REWORK-007 §1：每日变化的简报优先，实时发现区退到历史索引之后（原先压在简报之上）。
   if (briefId !== null) {
-    const brief = getBrief(LIBRARY, briefId);
+    const brief = getBrief(renderLibrary, briefId);
     if (!brief) {
       page.appendChild(notFoundBox('简报', briefId));
       return;
     }
     page.appendChild(briefPanel(brief));
     page.appendChild(briefArchive(brief.id));
+    page.appendChild(renderDiscoverSection());
     return;
   }
-  const latest = latestBrief(LIBRARY);
+  const latest = latestBrief(renderLibrary);
   page.appendChild(el('h3', 'lib-block-title', '选编简报'));
   page.appendChild(briefPanel(latest));
   page.appendChild(briefArchive(latest.id));
+  page.appendChild(renderDiscoverSection());
 }
 
 // 历史工作日索引：按期列出全部简报并标明当前期；未产出的日期不占位、不补写。
 function briefArchive(currentId) {
   const box = el('div', 'lib-brief-archive');
   box.appendChild(el('h3', 'lib-block-title', '历史工作日'));
-  const sorted = [...LIBRARY.briefs].sort((a, b) => String(b.date).localeCompare(String(a.date)));
+  const sorted = [...renderLibrary.briefs].sort((a, b) => String(b.date).localeCompare(String(a.date)));
   const ul = el('ul', 'lib-list');
   for (const brief of sorted) {
     const li = el('li');
@@ -2327,7 +3478,8 @@ function renderSidebarQuick() {
   const group = el('details', 'lib-quick-group');
   group.open = true;
   group.appendChild(el('summary', 'lib-quick-title', '方向入口'));
-  const directions = sortDirections(LIBRARY);
+  // PF-01 补：侧栏快捷入口只列 active。
+  const directions = activeDirections(renderLibrary);
   if (directions.length === 0) group.appendChild(el('p', 'lib-quick-empty', '方向尚未接入。'));
   for (const direction of directions) {
     const a = link(buildHash('route', direction.id), '', 'lib-quick-link');
@@ -2344,7 +3496,9 @@ function renderFooterOnce() {
   footer.dataset.rendered = 'true';
   const details = el('details', 'lib-about');
   details.appendChild(el('summary', null, '关于内容与来源'));
-  for (const notice of LIBRARY.meta?.notices ?? []) details.appendChild(el('p', null, notice));
+  for (const notice of renderLibrary.meta?.notices ?? []) details.appendChild(el('p', null, notice));
+  // 03 §6：页脚只增加一次的整理依据提示。
+  details.appendChild(el('p', null, '整理依据已标明；建议自己看的部分请打开原文。打开网页不会变成已读。'));
   footer.appendChild(details);
 }
 
@@ -2361,7 +3515,9 @@ function renderApp() {
     renderNotFound(container, String(raw ?? ''));
     return;
   }
-  setNav(parsed.view);
+  // 03 §6：材料详情带路线上下文时归属方向导航激活项。
+  const navView = parsed.view === 'material' && parsed.routeId ? 'route' : parsed.view;
+  setNav(navView);
   switch (parsed.view) {
     case 'home':
       renderHome(container);
@@ -2376,13 +3532,16 @@ function renderApp() {
       renderPapers(container);
       break;
     case 'paper':
-      renderPaper(container, parsed.id);
+      renderPaper(container, parsed.id, parsed);
+      break;
+    case 'material':
+      renderMaterial(container, parsed.id, parsed);
       break;
     case 'learn':
       renderLearn(container);
       break;
     case 'learnRoute':
-      renderLearn(container, parsed.id);
+      renderLearn(container, parsed.id, parsed);
       break;
     case 'brief':
       renderBrief(container);

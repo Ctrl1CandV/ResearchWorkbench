@@ -5,7 +5,8 @@
 //   不结束占用端口的进程。
 // 静态部分：
 // - 原始 URL 精确匹配固定白名单（/、/index.html、/styles.css、/library.js、
-//   /library-content.js、/notes.js）；其他路径（含 query、大小写、编码、遍历）404；
+//   /library-content.js、/content/ 八个数据模块、/learning/multiagent-lab.md、/notes.js）；
+//   其他路径（含 query、大小写、编码、遍历）404；
 //   畸形百分号编码 400；不做路径解码拼接、不做目录列表。
 // - 固定资源读取前拒绝符号链接，并核验 realpath 仍在 public 内。
 // - CSP 保持 default-src 'self' / connect-src 'self'：页面无内联脚本与内联样式，
@@ -39,6 +40,15 @@ const ROUTE_MAP = new Map([
   ['/styles.css', 'styles.css'],
   ['/library.js', 'library.js'],
   ['/library-content.js', 'library-content.js'],
+  ['/content/directions.js', 'content/directions.js'],
+  ['/content/papers-routes.js', 'content/papers-routes.js'],
+  ['/content/papers-supplements.js', 'content/papers-supplements.js'],
+  ['/content/papers-foundations.js', 'content/papers-foundations.js'],
+  ['/content/papers-collab.js', 'content/papers-collab.js'],
+  ['/content/technical-routes.js', 'content/technical-routes.js'],
+  ['/content/briefs.js', 'content/briefs.js'],
+  ['/content/materials.js', 'content/materials.js'],
+  ['/learning/multiagent-lab.md', 'learning/multiagent-lab.md'],
   ['/notes.js', 'notes.js'],
 ]);
 
@@ -46,6 +56,7 @@ const CONTENT_TYPES = new Map([
   ['.html', 'text/html; charset=utf-8'],
   ['.css', 'text/css; charset=utf-8'],
   ['.js', 'text/javascript; charset=utf-8'],
+  ['.md', 'text/plain; charset=utf-8'],
 ]);
 
 // % 后未跟两个十六进制位视为畸形。

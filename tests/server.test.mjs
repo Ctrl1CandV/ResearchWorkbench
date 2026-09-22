@@ -19,6 +19,15 @@ const SENTINELS = {
   'styles.css': '/* sentinel-css */',
   'library.js': '// sentinel-library',
   'library-content.js': '// sentinel-library-content',
+  'content/directions.js': '// sentinel-content-directions',
+  'content/papers-routes.js': '// sentinel-content-papers-routes',
+  'content/papers-supplements.js': '// sentinel-content-papers-supplements',
+  'content/papers-foundations.js': '// sentinel-content-papers-foundations',
+  'content/papers-collab.js': '// sentinel-content-papers-collab',
+  'content/materials.js': '// sentinel-content-materials',
+  'content/technical-routes.js': '// sentinel-content-technical-routes',
+  'learning/multiagent-lab.md': '# sentinel lab',
+  'content/briefs.js': '// sentinel-content-briefs',
   'notes.js': '// sentinel-notes',
 };
 
@@ -42,6 +51,8 @@ function createFakeDiscovery(script = {}) {
 }
 
 test.before(async () => {
+  await fsp.mkdir(path.join(testRoot, 'content'), { recursive: true });
+  await fsp.mkdir(path.join(testRoot, 'learning'), { recursive: true });
   for (const [name, content] of Object.entries(SENTINELS)) {
     await fsp.writeFile(path.join(testRoot, name), content, 'utf8');
   }
@@ -89,13 +100,22 @@ test('GET / 返回 index 哨兵，内容类型 text/html', async () => {
   assert.ok(res.headers['content-type'].startsWith('text/html'));
 });
 
-test('白名单六个路径均可访问且内容类型正确', async () => {
+test('白名单十五个路径均可访问且内容类型正确（含 content/ 八个模块与教材，008.2 新增）', async () => {
   const cases = [
     ['/', 'text/html', SENTINELS['index.html']],
     ['/index.html', 'text/html', SENTINELS['index.html']],
     ['/styles.css', 'text/css', SENTINELS['styles.css']],
     ['/library.js', 'text/javascript', SENTINELS['library.js']],
     ['/library-content.js', 'text/javascript', SENTINELS['library-content.js']],
+    ['/content/directions.js', 'text/javascript', SENTINELS['content/directions.js']],
+    ['/content/papers-routes.js', 'text/javascript', SENTINELS['content/papers-routes.js']],
+    ['/content/papers-supplements.js', 'text/javascript', SENTINELS['content/papers-supplements.js']],
+    ['/content/papers-foundations.js', 'text/javascript', SENTINELS['content/papers-foundations.js']],
+    ['/content/papers-collab.js', 'text/javascript', SENTINELS['content/papers-collab.js']],
+    ['/content/materials.js', 'text/javascript', SENTINELS['content/materials.js']],
+    ['/content/technical-routes.js', 'text/javascript', SENTINELS['content/technical-routes.js']],
+    ['/learning/multiagent-lab.md', 'text/plain', SENTINELS['learning/multiagent-lab.md']],
+    ['/content/briefs.js', 'text/javascript', SENTINELS['content/briefs.js']],
     ['/notes.js', 'text/javascript', SENTINELS['notes.js']],
   ];
   for (const [pathname, typePrefix, sentinel] of cases) {
@@ -504,8 +524,20 @@ test('startServer 默认使用项目 public 目录并成功提供内容；未注
         .on('error', reject);
     });
     assert.equal(body.status, 200);
-    assert.ok(body.text.includes('LIBRARY-CONTENT'), '默认 rootDir 指向项目 public（内容包）');
-    assert.ok(body.text.includes('arxiv.org'), '默认 rootDir 指向项目 public');
+    assert.ok(body.text.includes('LIBRARY-CONTENT'), '默认 rootDir 指向项目 public（内容包聚合器）');
+    // 拆分（REWORK-007）后论文数据在 content/ 模块中：聚合器与数据模块都应可从默认 rootDir 取到
+    assert.ok(body.text.includes('./content/papers-routes.js'), '聚合器引用拆分模块');
+    const dataBody = await new Promise((resolve, reject) => {
+      http
+        .get({ host: BIND_HOST, port, path: '/content/papers-routes.js', headers: { host: `${BIND_HOST}:${port}` } }, (res) => {
+          const chunks = [];
+          res.on('data', (c) => chunks.push(c));
+          res.on('end', () => resolve({ status: res.statusCode, text: Buffer.concat(chunks).toString('utf8') }));
+        })
+        .on('error', reject);
+    });
+    assert.equal(dataBody.status, 200);
+    assert.ok(dataBody.text.includes('arxiv.org'), '拆分数据模块可由默认 rootDir 提供');
   } finally {
     await close();
   }
