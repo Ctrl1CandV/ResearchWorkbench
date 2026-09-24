@@ -229,7 +229,7 @@ function mapSideLabel(node) {
 }
 // 页面级来源声明（B 包固定文案；关系≠引用）。
 export const MAP_PROVENANCE_NOTE =
-  '本图是小型文字地图：节点与连线只表示编辑排定的概念关联，不是论文之间的真实引用关系；每条来源标注其性质与日期。';
+  '实线表示有来源支持的知识关系，虚线表示建议阅读顺序；建议顺序是阅读指引，不是论文引用。';
 // 个人进度缺失的显式声明（不显示任何已读/进度；R2「没有个人记录时不暗示已读」）。
 export const MAP_NO_PROGRESS_NOTE =
   '地图与关系不记录、也不显示任何人的阅读进度或已读状态：这里只有认识结构与来源，打开本页不改变任何本人标记。';
@@ -239,12 +239,18 @@ export const MAP_UNREVIEWED_NOTE =
   '未连接的开放问题只作为问题文字呈现，不画线、不暗示连接：只有来源核查为「保留可用」的条目才进入节点与连线。';
 // 覆盖层尚未接入前的基线范围声明（含核查日期锚点，随内容工作刷新）。
 export const MAP_BASELINE_SCOPE_NOTE =
-  '上图是当前基线地图（核查至 2026-09-23 的 R7 复核）；某 active 方向若其来源条目为「保留收窄／正文待核」，本轮不进入基线，待复核正文后经内容工作补入。';
+  '地图只纳入已有依据支持的内容；证据不足的方向与关系暂不画入图中。';
 
 // PLAN-011：内部契约词（如 PF-07 编号）保留在数据字段与测试断言中，不进入读者可见文本；
 // 渲染时从来源注记里剥离。仅做精确短串剥离，不改写数据本身（009 地图数据契约不降级）。
 function readerSourceNote(note) {
-  return String(note ?? '').replace(/（PF-07）/g, '').replace(/\(PF-07\)/g, '');
+  return String(note ?? '')
+    .replace(/（PF-07）/g, '')
+    .replace(/\(PF-07\)/g, '')
+    .replace(/20\d{2}-\d{2}-\d{2}/g, '')
+    .replace(/\s*[；，、]\s*[；，、]/g, '；')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
 }
 
 // 多智能体贯通教材的唯一允许路径与章节标识（04 §2.1；labPath 仅允许这个精确值）。
@@ -368,7 +374,7 @@ function parseHashQuery(qs, view) {
     if (eq <= 0) return null;
     const key = pair.slice(0, eq);
     const rawValue = pair.slice(eq + 1);
-    if (!['route', 'track', 'unit'].includes(key) || seen.has(key)) return null;
+    if (!['route', 'track', 'unit', 'node', 'path', 'layout', 'y'].includes(key) || seen.has(key)) return null;
     seen.add(key);
     let value;
     try {
@@ -379,9 +385,17 @@ function parseHashQuery(qs, view) {
     if (value === '' || value === '.' || value === '..') return null;
     if (key === 'route') out.routeId = value;
     else if (key === 'unit') out.unitId = value;
-    else out.track = value;
+    else if (key === 'track') out.track = value;
+    else if (key === 'node') out.mapNodeId = value;
+    else if (key === 'path') out.mapPathId = value;
+    else if (key === 'layout') out.mapLayout = value;
+    else out.mapScrollY = value;
   }
   const detailViews = ['paper', 'material', 'learnRoute'];
+  const hasMapContext = ['mapNodeId', 'mapPathId', 'mapLayout', 'mapScrollY'].some((key) => out[key] !== undefined);
+  if (hasMapContext && view !== 'map') return null;
+  if (out.mapLayout !== undefined && !['map', 'list'].includes(out.mapLayout)) return null;
+  if (out.mapScrollY !== undefined && !/^\d{1,7}$/.test(out.mapScrollY)) return null;
   if (out.unitId !== undefined && view !== 'learnRoute') return null;
   if ((out.routeId !== undefined || out.track !== undefined) && !detailViews.includes(view)) return null;
   if (out.routeId !== undefined && out.track === undefined) return null;
@@ -824,12 +838,32 @@ export function coverageRows(paper) {
   const c = paper.coverage ?? {};
   const rows = [];
   if (c.mode) rows.push(['依据', COVERAGE_MODE_LABELS[c.mode] ?? c.mode]);
-  if (c.basis) rows.push(['来源', c.basis]);
-  if (c.version) rows.push(['版本', c.version]);
+  if (c.basis) rows.push(['来源', readerSourceNote(c.basis)]);
   if (Array.isArray(c.sections) && c.sections.length > 0) rows.push(['实际覆盖', c.sections.join('；')]);
   if (c.limitations) rows.push(['未覆盖', c.limitations]);
-  if (c.checkedAt) rows.push(['核查时间', c.checkedAt]);
   return rows;
+}
+
+function paperPublicationLabel(paper) {
+  const version = String(paper?.coverage?.version ?? '');
+  const arxiv = version.match(/arXiv:(\d{4})\.\d{4,5}/i) ?? String(paper?.url ?? '').match(/arxiv\.org\/(?:abs|pdf)\/(\d{4})\.\d{4,5}/i);
+  const uncertainVenue = /外部检索指向|未在.*确认|待核/.test(version);
+  const venue = !uncertainVenue
+    ? version.match(/(Findings of ACL|ACM Computing Surveys|NeurIPS|ICLR|ICML|EMNLP|NAACL|AAAI|IJCAI|CVPR|ICCV|TSE|TOSEM|TOIS|EMSE|TPAMI|Nature|KDD|COLM|ICSE|ISSTA|FCS)\s*(20\d{2})/i)
+    : null;
+  if (venue) return `发表版本：${venue[1]} ${venue[2]}`;
+  if (arxiv) {
+    const date = version.match(/v1\s+(\d{4}-\d{2}-\d{2})/);
+    if (date) return `arXiv 首次提交：${date[1]}`;
+    const id = version.match(/arXiv:(\d{2})(\d{2})\.\d{4,5}/i) ?? String(paper?.url ?? '').match(/arxiv\.org\/(?:abs|pdf)\/(\d{2})(\d{2})\.\d{4,5}/i);
+    if (id) {
+      const year = Number(id[1]) >= 90 ? 1900 + Number(id[1]) : 2000 + Number(id[1]);
+      return `arXiv 首次提交：${year}-${id[2]}`;
+    }
+  }
+  if (!version || /外部检索指向|未在.*确认|待核/.test(version)) return '';
+  const year = version.match(/\b((?:19|20)\d{2})\b/);
+  return year ? `发表年份：${year[1]}` : '';
 }
 
 // 各集合数量与空态；空集合必须走 EMPTY_NOTICES 的明确文案。
@@ -2248,14 +2282,7 @@ function renderHomeFocusHero() {
   if (direction) focusLine.appendChild(link(buildHash('route', direction.id), direction.title));
   else focusLine.appendChild(el('span', 'lib-unsafe-link', '方向尚未接入'));
   box.appendChild(focusLine);
-  // 来源＋日期行（编辑建议：方向集合经用户授权；覆盖层调整另起一行，R4 纯文本 meta）。
-  box.appendChild(
-    el(
-      'p',
-      'lib-focus-prov',
-      `编辑建议 · 方向集合经用户 2026-09-21／09-22 授权；现状核查截止 ${direction?.asOf ?? '—'}。`,
-    ),
-  );
+  // 页面只呈现读者需要的导学信息；授权和核查时间留在数据与审计文档中。
   if (focus.noteVisible) {
     const hf = overlay?.homeFocus ?? null;
     const meta = hf ? adjustLabel({ origin: hf.origin, example: hf.example }) : '导学调整（本人确认）';
@@ -2273,10 +2300,8 @@ function renderHomeFocusHero() {
   for (const entry of heroAdjustments) {
     box.appendChild(el('p', 'lib-adjust-meta', adjustLabel(entry)));
   }
+  box.appendChild(el('p', 'lib-focus-scope', '当前关注是起步的兴趣与阅读上下文，不是已经定稿的论文题目；研究机制仍待比较。'));
   // cross-harness 兴趣 ≠ 定稿题目（交付行为 1／长期约束：不承诺创新或发表）。
-  box.appendChild(
-    el('p', 'lib-focus-scope', '当前关注是起步的兴趣场景与阅读上下文，不是已经定稿的论文题目，也不预设任何机制或表示胜出。'),
-  );
   if (focus.fallbackNote) box.appendChild(el('p', 'lib-notice-flat', focus.fallbackNote));
 
   // —— 读什么（下一步，生效 startRoute 首节点推导）——
@@ -2380,6 +2405,134 @@ function renderHomeSecondaryRow() {
 }
 
 function renderHome(container) {
+  return renderHomeLegacy(container);
+}
+
+function renderHomeReader(container) {
+  const page = el('div', 'lib-home lib-home-reader');
+  container.appendChild(page);
+  const home = renderLibrary.home;
+  if (!home) {
+    page.appendChild(el('h1', 'lib-display', '研究、阅读与技术学习'));
+    page.appendChild(emptyBox('首页说明尚未接入。'));
+    return;
+  }
+
+  page.appendChild(el('h1', 'lib-display', home.title));
+  page.appendChild(el('p', 'lib-home-lead', '沿知识脉络认识 Agent，再按自己的研究方向读论文、补技术。'));
+
+  const focus = resolveHomeFocus(renderBase);
+  const start = focus.step;
+  const startBox = el('section', 'lib-home-start');
+  startBox.appendChild(el('p', 'lib-zone-flag', '建议从这里开始'));
+  if (start?.resolved) {
+    const href = start.__fallback
+      ? startTargetHref(renderLibrary.home?.startHere)
+      : stepHref(focus.direction?.id, 'start', start) ?? start.resolved.href;
+    startBox.appendChild(el('h2', 'lib-home-start-title', start.resolved.title));
+    if (start.resolved.lead) startBox.appendChild(el('p', 'lib-home-start-note', start.resolved.lead));
+    startBox.appendChild(link(href ?? '#/home', '开始阅读', 'lib-btn'));
+  } else {
+    startBox.appendChild(el('p', 'lib-home-start-note', '起步导读暂不可用，可从研究方向中选择入口。'));
+  }
+
+  if (v3Available()) {
+    const reading = Object.entries(v3Runtime.state.papers ?? {})
+      .filter(([, record]) => record?.status === 'reading')
+      .map(([id]) => getPaper(renderLibrary, id))
+      .filter(Boolean)
+      .slice(0, 2);
+    if (reading.length > 0) {
+      const line = el('p', 'lib-home-reading');
+      line.appendChild(el('strong', null, '继续在读：'));
+      reading.forEach((paper, index) => {
+        if (index > 0) line.appendChild(document.createTextNode(' · '));
+        line.appendChild(paperLink(paper));
+      });
+      startBox.appendChild(line);
+    }
+  }
+  if (guidanceUi.pending.length > 0) {
+    startBox.appendChild(link('#/guidance', `有 ${guidanceUi.pending.length} 条待确认调整`, 'lib-home-pending'));
+  }
+  page.appendChild(startBox);
+
+  const cards = el('div', 'lib-home-reader-grid');
+  const card = (title, description, href, label) => {
+    const section = el('section', 'lib-home-reader-card');
+    section.appendChild(el('h2', 'lib-home-reader-title', title));
+    section.appendChild(el('p', 'lib-home-reader-note', description));
+    section.appendChild(link(href, label, 'lib-home-reader-link'));
+    cards.appendChild(section);
+    return section;
+  };
+
+  const land = renderLibrary.landscape;
+  const layerIntro = (land?.layers ?? []).map((layer) => layer.title).join(' · ');
+  card('知识地图', `从 AI 基础到 Agent 全景，再走进专题：${layerIntro}。`, '#/map', '浏览知识地图');
+
+  const directions = activeDirections(renderLibrary);
+  const directionCard = card(
+    '研究方向',
+    '先看两条起步方向各自要解决什么问题，再进入对应的论文路线。',
+    '#/directions',
+    '查看研究方向',
+  );
+  const directionList = el('p', 'lib-home-reader-sub');
+  directions.forEach((direction, index) => {
+    if (index > 0) directionList.appendChild(document.createTextNode(' · '));
+    directionList.appendChild(link(buildHash('route', direction.id), direction.title));
+  });
+  directionCard.appendChild(directionList);
+
+  const techRoutes = featuredTechnicalRoutes(renderLibrary);
+  const techCard = card('技术学习', '读到论文里的方法时，再补当前需要的技术。', '#/learn', '进入技术学习');
+  const techList = el('p', 'lib-home-reader-sub');
+  techRoutes.forEach((route, index) => {
+    if (index > 0) techList.appendChild(document.createTextNode(' · '));
+    techList.appendChild(link(buildHash('learn', route.id), route.title));
+  });
+  techCard.appendChild(techList);
+  page.appendChild(cards);
+
+  const latest = [...(renderLibrary.briefs ?? [])]
+    .filter((brief) => Array.isArray(brief.items) && brief.items.length > 0)
+    .sort((a, b) => String(b.date).localeCompare(String(a.date)))[0];
+  const briefs = el('section', 'lib-home-briefs');
+  const briefHead = el('div', 'lib-home-brief-head');
+  briefHead.appendChild(el('h2', 'lib-home-reader-title', '近期精选'));
+  if (latest) briefHead.appendChild(el('span', 'lib-res-meta', `简报期次 ${latest.date}`));
+  briefs.appendChild(briefHead);
+  if (latest) {
+    for (const item of latest.items.slice(0, 3)) {
+      const row = el('p', 'lib-home-brief-row');
+      const target = briefItemTarget(renderLibrary, item);
+      if (target?.kind === 'paper') {
+        const paper = getPaper(renderLibrary, target.paperId);
+        if (paper) row.appendChild(paperLink(paper));
+        else row.appendChild(document.createTextNode(item.title ?? item.paperId ?? ''));
+      } else if (target?.kind === 'external') row.appendChild(externalLink(target.href, briefSourceLabel(item, target.href)));
+      else row.appendChild(document.createTextNode(item.title ?? item.source ?? ''));
+      row.appendChild(el('span', 'lib-home-brief-reason', ` — ${item.reason ?? ''}`));
+      briefs.appendChild(row);
+    }
+  } else {
+    briefs.appendChild(el('p', 'lib-muted', '暂无已收录的精选条目。'));
+  }
+  briefs.appendChild(link('#/brief', '查看全部精选', 'lib-home-reader-link'));
+  page.appendChild(briefs);
+
+  const secondary = el('p', 'lib-home-secondary-reader');
+  secondary.appendChild(el('span', 'lib-focus-label', '其他入口：'));
+  const entries = [['全部论文', '#/papers'], ['经典书目', '#/foundations'], ['导学调整', '#/guidance']];
+  entries.forEach(([label, href], index) => {
+    if (index > 0) secondary.appendChild(document.createTextNode(' · '));
+    secondary.appendChild(link(href, label));
+  });
+  page.appendChild(secondary);
+}
+
+function renderHomeLegacy(container) {
   const home = renderLibrary.home;
   const page = el('div', 'lib-home');
   container.appendChild(page);
@@ -2388,17 +2541,10 @@ function renderHome(container) {
     page.appendChild(emptyBox('首页说明尚未接入。'));
     return;
   }
-  // REWORK-007 §2：首页需要时间锚点——最新简报日期与更新日并列；精选区移到第一位。
+  // 简报日期作为内容期次保留；不展示页面整理/维护日期。
   const latest = latestBrief(renderLibrary);
   page.appendChild(el('h1', 'lib-display', home.title));
   page.appendChild(el('p', 'lib-sub', home.intro));
-  page.appendChild(
-    el(
-      'p',
-      'lib-home-updated',
-      `内容更新日期 ${home.updatedOn}（只反映本页内容的整理时间，不是论文发表时间）；最新简报 ${latest ? latest.date : '尚无产出'}（工作日更新，缺日即当日未产出）。`,
-    ),
-  );
 
   // DYNAMIC-GUIDANCE-009 / B 包：首屏"做什么、读什么、怎么读"连贯动线（R2 线框）。
   // 生效值仅经 resolveHomeFocus→computeEffective 单入口；无覆盖层时＝基线推导，不写死步骤指针。
@@ -2434,10 +2580,11 @@ function renderHome(container) {
           const title = el('p', 'lib-zone-item-title');
           const target = briefItemTarget(renderLibrary, item);
           if (target?.kind === 'paper') title.appendChild(paperLink(getPaper(renderLibrary, target.paperId)));
-          else if (target?.kind === 'external') title.appendChild(externalLink(target.href, briefSourceLabel(item, target.href)));
+          else if (target?.kind === 'external') title.appendChild(externalLink(target.href, item.displayTitle ?? briefSourceLabel(item, target.href)));
           else title.appendChild(el('span', 'lib-unsafe-link', `${item.paperId ?? item.source ?? ''}（关联未接入）`));
           line.appendChild(title);
-          line.appendChild(el('p', 'lib-zone-item-note', `${item.tier}：${item.reason}`));
+          if (item.published) line.appendChild(el('p', 'lib-res-meta', `发表时间：${item.published}`));
+          line.appendChild(el('p', 'lib-zone-item-note', `${item.tier}：${item.displayReason ?? item.reason}`));
           briefBody.appendChild(line);
         }
       } else {
@@ -2588,10 +2735,11 @@ function renderHome(container) {
           const title = el('p', 'lib-zone-item-title');
           const target = briefItemTarget(renderLibrary, item);
           if (target?.kind === 'paper') title.appendChild(paperLink(getPaper(renderLibrary, target.paperId)));
-          else if (target?.kind === 'external') title.appendChild(externalLink(target.href, briefSourceLabel(item, target.href)));
+          else if (target?.kind === 'external') title.appendChild(externalLink(target.href, item.displayTitle ?? briefSourceLabel(item, target.href)));
           else title.appendChild(el('span', 'lib-unsafe-link', `${item.paperId ?? item.source ?? ''}（关联未接入）`));
           line.appendChild(title);
-          line.appendChild(el('p', 'lib-zone-item-note', `${item.tier}：${item.reason}`));
+          if (item.published) line.appendChild(el('p', 'lib-res-meta', `发表时间：${item.published}`));
+          line.appendChild(el('p', 'lib-zone-item-note', `${item.tier}：${item.displayReason ?? item.reason}`));
           sub.appendChild(line);
         }
         body.appendChild(sub);
@@ -2720,19 +2868,6 @@ function renderHome(container) {
     grid.appendChild(homeZone(zone, body));
   }
 
-  if (Array.isArray(home.firstUse) && home.firstUse.length > 0) {
-    const first = el('section', 'lib-firstuse');
-    first.appendChild(el('h3', 'lib-firstuse-title', '第一次使用'));
-    const ol = el('ol', 'lib-steps');
-    for (const step of home.firstUse) {
-      const li = el('li', 'lib-route-step');
-      li.appendChild(el('h4', 'lib-step-title', step.title));
-      if (step.text) li.appendChild(el('p', 'lib-step-line', step.text));
-      ol.appendChild(li);
-    }
-    first.appendChild(ol);
-    page.appendChild(first);
-  }
 }
 
 // ---------- DYNAMIC-GUIDANCE-009 / B 包：领域认识 · 小型文字地图（#/map） ----------
@@ -2774,7 +2909,7 @@ function renderMapNode(lib, node) {
     el(
       'p',
       'lib-map-source',
-      `来源：${MAP_ORIGIN_LABELS[src.originType] ?? src.originType ?? '未标注'}${src.asOf ? ` · ${src.asOf}` : ''}${src.note ? ` —— ${readerSourceNote(src.note)}` : ''}`,
+      `来源：${MAP_ORIGIN_LABELS[src.originType] ?? src.originType ?? '未标注'}${src.note ? ` —— ${readerSourceNote(src.note)}` : ''}`,
     ),
   );
   // C 包（R4）：该节点被覆盖层新增/调整时，追加纯文本 meta 行；示例条目带示例字样。
@@ -2823,7 +2958,7 @@ function renderMapEdge(lib, edge, nodeById) {
     el(
       'p',
       'lib-map-source',
-      `来源：${MAP_ORIGIN_LABELS[src.originType] ?? src.originType ?? '未标注'}${src.asOf ? ` · ${src.asOf}` : ''}${src.note ? ` —— ${readerSourceNote(src.note)}` : ''}`,
+      `来源：${MAP_ORIGIN_LABELS[src.originType] ?? src.originType ?? '未标注'}${src.note ? ` —— ${readerSourceNote(src.note)}` : ''}`,
     ),
   );
   const meta = adjustMetaFor(currentGuidanceOverlay(), 'map-edge', edge.id, ['meaning', 'evidence']);
@@ -2844,7 +2979,7 @@ function svgEl(tag, attrs = {}) {
   return node;
 }
 
-// 分层三列布局：列＝层（数组序），行＝层内序号；位置由数据推导，不在数据里手写坐标。
+// 分层三列布局：放宽列距与行距，让完整节点标题在桌面图上可读。
 function computeLandscapeLayout(land) {
   const layers = land.layers ?? [];
   const byLayer = new Map(layers.map((l) => [l.id, []]));
@@ -2852,13 +2987,13 @@ function computeLandscapeLayout(land) {
     if (!byLayer.has(node.layer)) byLayer.set(node.layer, []);
     byLayer.get(node.layer).push(node);
   }
-  const COL_W = 250;
-  const ROW_H = 78;
+  const COL_W = 380;
+  const ROW_H = 112;
   const pos = new Map();
   layers.forEach((layer, col) => {
     const list = byLayer.get(layer.id) ?? [];
     list.forEach((node, row) => {
-      pos.set(node.id, { x: col * COL_W + 96, y: row * ROW_H + 56 });
+      pos.set(node.id, { x: col * COL_W + COL_W / 2, y: row * ROW_H + 52 });
     });
   });
   const width = Math.max(1, layers.length) * COL_W + 40;
@@ -2868,8 +3003,31 @@ function computeLandscapeLayout(land) {
 }
 
 function landscapeNodeLabel(node) {
-  const title = node.title ?? '';
-  return title.length > 11 ? `${title.slice(0, 11)}…` : title;
+  return node.title ?? '';
+}
+
+function wrapLandscapeLabel(title, maxUnits = 19) {
+  const tokens = String(title).match(/[\p{Script=Han}]+|[A-Za-z0-9]+(?:[-–—][A-Za-z0-9]+)*|[^\s]/gu) ?? [];
+  const lines = [];
+  let line = '';
+  let units = 0;
+  let previousLatin = false;
+  for (const token of tokens) {
+    const latin = /^[A-Za-z0-9]/.test(token);
+    const prefix = latin && previousLatin ? ' ' : '';
+    const tokenUnits = /^[\p{Script=Han}]+$/u.test(token) ? token.length : [...token].length * (latin ? 0.58 : 1);
+    if (line && units + tokenUnits + (prefix ? 0.6 : 0) > maxUnits) {
+      lines.push(line);
+      line = token;
+      units = tokenUnits;
+    } else {
+      line += prefix + token;
+      units += tokenUnits + (prefix ? 0.6 : 0);
+    }
+    previousLatin = latin;
+  }
+  if (line) lines.push(line);
+  return lines;
 }
 
 // 节点详解：guide（连贯讲解）优先；六字段速览退居折叠（有讲解时），无讲解节点字段保持直出。
@@ -2884,7 +3042,7 @@ function renderLandscapeDetail(land, node, nodeById) {
     ['例子', node.example],
     ['能力变化', node.capability],
     ['局限', node.limitation],
-    ['来源', node.source ? `${node.source.note}（${node.source.asOf}）` : null],
+    ['来源', node.source?.note ?? null],
   ];
   const buildFields = () => {
     const dl = el('dl', 'lib-land-fields');
@@ -2926,7 +3084,7 @@ function renderLandscapeDetail(land, node, nodeById) {
       line.appendChild(el('strong', null, other ? other.title : otherId));
       line.appendChild(document.createTextNode(
         edge.kind === 'academic'
-          ? ` —— 学术关系：${edge.note ?? ''}（来源：${edge.source?.note ?? ''} ${edge.source?.asOf ?? ''}）`
+          ? ` —— 学术关系：${edge.note ?? ''}（来源：${edge.source?.note ?? ''}）`
           : ` —— 建议的阅读顺序（编辑安排）：${edge.note ?? ''}`,
       ));
       li.appendChild(line);
@@ -2937,38 +3095,26 @@ function renderLandscapeDetail(land, node, nodeById) {
   return box;
 }
 
-function renderLandscape(land) {
+function renderLandscape(land, context = {}) {
   const box = el('section', 'lib-land');
-  box.appendChild(el('p', 'lib-map-note', land.note ?? ''));
-  if (land.asOf) box.appendChild(el('p', 'lib-asof', `脉络图核查截止：${land.asOf}；节点内容以各节点来源为准。`));
+  box.appendChild(el('p', 'lib-map-note', '这张图从 AI 背景、Agent 组成一路连到研究专题。各条知识线索并行发展，不是单一路线彼此取代；原文来源可用于核对和延伸阅读。'));
 
   const nodeById = new Map((land.nodes ?? []).map((n) => [n.id, n]));
   const { pos, width, height } = computeLandscapeLayout(land);
-  const selected = { current: null };
-
-  // —— 详解面板（点击/键盘选中后更新；窄屏选中后滚动到详解，桌面图与详解并列无需滚动）——
-  const detail = el('div', 'lib-land-detailbox');
-  detail.appendChild(el('p', 'lib-muted', '点选图中节点或下方层级文本中的节点，查看问题、思想、例子、能力变化、局限与前后关系。'));
-  const selectNode = (node, options = {}) => {
-    const { scroll = true } = options;
-    selected.current = node;
-    detail.textContent = '';
-    detail.appendChild(renderLandscapeDetail(land, node, nodeById));
-    for (const item of textButtons) {
-      item.classList.toggle('lib-land-item-active', item.dataset.landId === node.id);
-    }
-    // 窄屏反馈：选中后把详解滚入视野；尊重 prefers-reduced-motion；初始加载不滚、不抢焦点。
-    if (scroll && typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
-      const narrow = window.matchMedia('(max-width: 900px)').matches;
-      if (narrow && typeof detail.scrollIntoView === 'function') {
-        const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-        detail.scrollIntoView({ behavior: reduced ? 'auto' : 'smooth', block: 'nearest' });
-      }
+  const openNode = (node, pathId = context.mapPathId) => {
+    const returnY = typeof window !== 'undefined' ? Math.max(0, Math.round(window.scrollY ?? 0)) : 0;
+    if (typeof window !== 'undefined') {
+      window.location.hash = mapHash({ node: node.id, path: pathId, y: returnY });
     }
   };
 
   // —— SVG（桌面主视图；窄屏 CSS 隐藏，层级文本优先）——
   const svg = svgEl('svg', { class: 'lib-land-svg', viewBox: `0 0 ${width} ${height}`, role: 'group', 'aria-label': '广域认知脉络图' });
+  for (const [col, layer] of (land.layers ?? []).entries()) {
+    const heading = svgEl('text', { x: col * 380 + 190, y: 25, class: 'lib-land-column-title', 'text-anchor': 'middle' });
+    heading.textContent = layer.title ?? '';
+    svg.appendChild(heading);
+  }
   // 边先画（在下层）。
   for (const edge of land.edges ?? []) {
     const a = pos.get(edge.from);
@@ -2997,42 +3143,44 @@ function renderLandscape(land) {
       'aria-label': `${node.title}（${node.when ?? ''}）`,
     });
     g.appendChild(svgEl('circle', { cx: p.x, cy: p.y, r: 17, class: 'lib-land-dot' }));
-    const label = svgEl('text', { x: p.x, y: p.y + 32, class: 'lib-land-label', 'text-anchor': 'middle' });
-    label.textContent = landscapeNodeLabel(node);
+    const label = svgEl('text', { x: p.x, y: p.y + 33, class: 'lib-land-label', 'text-anchor': 'middle' });
+    const lines = wrapLandscapeLabel(landscapeNodeLabel(node));
+    lines.forEach((line, i) => {
+      const span = svgEl('tspan', { x: p.x, dy: i === 0 ? 0 : 18 });
+      span.textContent = line;
+      label.appendChild(span);
+    });
     g.appendChild(label);
-    g.addEventListener('click', () => selectNode(node));
+    g.addEventListener('click', () => openNode(node));
     g.addEventListener('keydown', (event) => {
       if (event?.key === 'Enter' || event?.key === ' ') {
         event?.preventDefault?.();
-        selectNode(node);
+        openNode(node);
       }
     });
     svg.appendChild(g);
   }
-  // —— 图 + 详解：桌面并列（反馈立即可见），窄屏上下排（选中后滚动到详解）。 ——
-  const main = el('div', 'lib-land-main');
-  const svgWrap = el('div', 'lib-land-svgwrap');
-  svgWrap.appendChild(svg);
-  main.appendChild(svgWrap);
-  main.appendChild(detail);
-  box.appendChild(main);
+  // 图形独占概览主体；长篇讲解只在点击节点后的详情页出现。
+  box.appendChild(svg);
+  const legend = el('p', 'lib-land-legend');
+  legend.appendChild(el('span', 'lib-land-legend-solid', '实线：有来源的知识关系'));
+  legend.appendChild(el('span', 'lib-land-legend-dashed', '虚线：建议阅读顺序'));
+  box.appendChild(legend);
 
-  // —— 层级文本（与 SVG 同数据；窄屏主视图，桌面为可访问文本轨）——
+  // —— 层级节点索引作为图形下方的辅助入口，默认收起 ——
   const layersBox = el('div', 'lib-land-layers');
   for (const layer of land.layers ?? []) {
     const details = el('details', 'lib-land-layer');
-    details.open = true;
+    details.open = false;
     const summary = el('summary', 'lib-land-layer-summary');
     summary.appendChild(el('strong', null, layer.title ?? ''));
     summary.appendChild(el('span', 'lib-res-meta', ` —— ${layer.summary ?? ''}（${(land.nodes ?? []).filter((n) => n.layer === layer.id).length} 个节点）`));
     details.appendChild(summary);
     const list = el('div', 'lib-land-layer-body');
     for (const node of (land.nodes ?? []).filter((n) => n.layer === layer.id)) {
-      const button = el('button', 'lib-land-item', `${node.title}（${node.when ?? ''}）—— ${node.problem ?? ''}`);
+      const button = el('button', 'lib-land-item', `${node.title}（${node.when ?? ''}）`);
       button.type = 'button';
-      button.dataset.landId = node.id;
-      button.addEventListener('click', () => selectNode(node));
-      textButtons.push(button);
+      button.addEventListener('click', () => openNode(node));
       list.appendChild(button);
     }
     details.appendChild(list);
@@ -3040,9 +3188,11 @@ function renderLandscape(land) {
   }
   box.appendChild(layersBox);
 
-  // —— 学习路径（4–6 条；节点序即建议阅读顺序）——
+  // —— 学习路径放在图下方折叠，避免与主图争夺首屏 ——
   if (Array.isArray(land.paths) && land.paths.length > 0) {
-    box.appendChild(el('h3', 'lib-block-title', '学习路径（建议阅读顺序，编辑排定）'));
+    const pathsBox = el('details', 'lib-land-paths');
+    pathsBox.open = Boolean(context.mapPathId);
+    pathsBox.appendChild(el('summary', null, '浏览学习路径（建议顺序）'));
     for (const path of land.paths) {
       const item = el('div', 'lib-land-path');
       item.appendChild(el('p', 'lib-land-path-title', path.title ?? ''));
@@ -3054,24 +3204,185 @@ function renderLandscape(land) {
         if (node) {
           const button = el('button', 'lib-land-chain', node.title);
           button.type = 'button';
-          button.addEventListener('click', () => selectNode(node));
+          button.addEventListener('click', () => openNode(node, path.id));
           chain.appendChild(button);
         } else {
           chain.appendChild(document.createTextNode(ref));
         }
       });
       item.appendChild(chain);
-      box.appendChild(item);
+      pathsBox.appendChild(item);
     }
+    box.appendChild(pathsBox);
   }
 
-  // 默认选中首个节点：详解不经点击即可见（图文同屏，讲解不藏在交互之后）；
-  // 初始加载不滚动、不抢焦点（scroll:false）。
-  if ((land.nodes ?? []).length > 0) selectNode(land.nodes[0], { scroll: false });
   return box;
 }
 
+function mapHash(params = {}) {
+  const entries = Object.entries(params).filter(([, value]) => value !== null && value !== undefined && value !== '');
+  if (entries.length === 0) return '#/map';
+  return `#/map?${entries.map(([key, value]) => `${key}=${encodeURIComponent(String(value))}`).join('&')}`;
+}
+
+function renderLandscapeOverview(land, context) {
+  const overview = el('section', 'lib-land-overview');
+  const makeNodeLink = (node, pathId = context.mapPathId) => {
+    const returnY = typeof window !== 'undefined' ? Math.max(0, Math.round(window.scrollY ?? 0)) : 0;
+    const href = mapHash({ node: node.id, path: pathId, layout: context.mapLayout, y: returnY });
+    const card = el('a', 'lib-land-card');
+    card.href = href;
+    card.appendChild(el('strong', 'lib-land-card-title', node.title));
+    if (node.problem) card.appendChild(el('span', 'lib-land-card-summary', node.problem));
+    return card;
+  };
+  const groupNodes = (nodes, ids) => ids.map((id) => nodes.find((node) => node.id === id)).filter(Boolean);
+  for (const layer of land.layers ?? []) {
+    const layerBox = el('section', `lib-land-band lib-land-band-${layer.id}`);
+    layerBox.appendChild(el('h2', 'lib-land-band-title', layer.title));
+    layerBox.appendChild(el('p', 'lib-land-band-intro', layer.summary));
+    const nodes = (land.nodes ?? []).filter((node) => node.layer === layer.id);
+    if (layer.id === 'land-layer-agent') {
+      const groups = [
+        ['认识与决策', ['land-b1', 'land-b2', 'land-c1', 'land-c2', 'land-c3']],
+        ['行动与知识', ['land-d1', 'land-d2', 'land-d3']],
+        ['协作、评测与应用', ['land-e1', 'land-e2', 'land-e3', 'land-e4', 'land-e5']],
+      ];
+      const grid = el('div', 'lib-land-subgroups');
+      for (const [title, ids] of groups) {
+        const subgroup = el('section', 'lib-land-subgroup');
+        subgroup.appendChild(el('h3', 'lib-land-subgroup-title', title));
+        const subgroupGrid = el('div', 'lib-land-cards');
+        for (const node of groupNodes(nodes, ids)) subgroupGrid.appendChild(makeNodeLink(node));
+        subgroup.appendChild(subgroupGrid);
+        grid.appendChild(subgroup);
+      }
+      layerBox.appendChild(grid);
+    } else {
+      const grid = el('div', 'lib-land-cards');
+      for (const node of nodes) grid.appendChild(makeNodeLink(node));
+      layerBox.appendChild(grid);
+    }
+    overview.appendChild(layerBox);
+  }
+
+  const selectedPath = (land.paths ?? []).find((path) => path.id === context.mapPathId);
+  const pathsBox = el('details', 'lib-land-paths');
+  pathsBox.open = Boolean(selectedPath);
+  pathsBox.appendChild(el('summary', null, '按学习路径浏览（可跳读）'));
+  for (const path of land.paths ?? []) {
+    const pathBox = el('section', 'lib-land-path-option');
+    pathBox.appendChild(el('h3', 'lib-land-subgroup-title', path.title));
+    if (path.description) pathBox.appendChild(el('p', 'lib-land-path-description', path.description));
+    const chain = el('p', 'lib-land-path-chain');
+    (path.nodeIds ?? []).forEach((id, index) => {
+      const node = land.nodes.find((item) => item.id === id);
+      if (!node) return;
+      if (index > 0) chain.appendChild(document.createTextNode(' → '));
+      chain.appendChild(link(mapHash({ node: node.id, path: path.id }), node.title, 'lib-land-path-link'));
+    });
+    pathBox.appendChild(chain);
+    pathsBox.appendChild(pathBox);
+  }
+  overview.appendChild(pathsBox);
+  return overview;
+}
+
+function renderLandscapeLesson(land, node, context) {
+  const lesson = el('article', 'lib-land-lesson');
+  const returnHref = mapHash({ layout: context.mapLayout, path: context.mapPathId, y: context.mapScrollY ?? 0 });
+  lesson.appendChild(link(returnHref, '← 返回知识地图', 'lib-land-back'));
+  const layer = land.layers.find((item) => item.id === node.layer);
+  lesson.appendChild(el('p', 'lib-land-lesson-kicker', `${layer?.title ?? ''}${node.when ? ` · ${node.when}` : ''}`));
+  lesson.appendChild(el('h1', 'lib-land-lesson-title', node.title));
+  if (node.problem) lesson.appendChild(el('p', 'lib-land-lesson-lead', node.problem));
+
+  const headings = {
+    motivation: '为什么需要这条思路',
+    mechanism: '它是怎样工作的',
+    example: '用例子理解',
+    confusion: '容易混淆与局限',
+    links: '它和前后知识的关系',
+  };
+  const guide = node.guide ?? {};
+  for (const key of ['motivation', 'mechanism', 'example', 'confusion', 'links']) {
+    const text = guide[key] ?? node[key === 'example' ? 'example' : key === 'motivation' ? 'problem' : key === 'mechanism' ? 'idea' : key === 'confusion' ? 'limitation' : 'capability'];
+    if (!text) continue;
+    const section = el('section', 'lib-land-lesson-section');
+    section.appendChild(el('h2', 'lib-land-lesson-heading', headings[key]));
+    section.appendChild(el('p', 'lib-land-lesson-text', text));
+    lesson.appendChild(section);
+  }
+
+  const related = (land.edges ?? []).filter((edge) => edge.from === node.id || edge.to === node.id);
+  if (related.length > 0) {
+    const section = el('section', 'lib-land-related');
+    section.appendChild(el('h2', 'lib-land-lesson-heading', '相关节点'));
+    const list = el('ul', 'lib-land-related-list');
+    for (const edge of related) {
+      const otherId = edge.from === node.id ? edge.to : edge.from;
+      const other = land.nodes.find((item) => item.id === otherId);
+      if (!other) continue;
+      const row = el('li');
+      row.appendChild(link(mapHash({ node: other.id, path: context.mapPathId }), other.title));
+      row.appendChild(document.createTextNode(` — ${edge.kind === 'academic' ? '知识关系' : '推荐阅读顺序'}：${edge.note ?? ''}`));
+      list.appendChild(row);
+    }
+    section.appendChild(list);
+    lesson.appendChild(section);
+  }
+
+  const source = readerSourceNote(node.sourceBrief?.split(/[；;]/, 1)[0] ?? node.source?.note?.split(/[；;]/, 1)[0] ?? '');
+  if (source) lesson.appendChild(el('p', 'lib-land-source-brief', source.replace(/^来源[：:]\s*/, '参考：')));
+  const nextPath = (land.paths ?? []).find((path) => path.id === context.mapPathId);
+  if (nextPath) {
+    const position = nextPath.nodeIds.indexOf(node.id);
+    const next = nextPath.nodeIds.slice(position + 1).map((id) => land.nodes.find((item) => item.id === id)).find(Boolean);
+    if (next) lesson.appendChild(link(mapHash({ node: next.id, path: nextPath.id }), `继续学习：${next.title}`, 'lib-land-next'));
+  }
+  return lesson;
+}
+
 function renderMap(container) {
+  const page = el('div', 'lib-page lib-map-reader');
+  container.appendChild(page);
+  const route = parseHash(typeof window === 'undefined' ? '#/map' : window.location.hash) ?? {};
+  const land = renderLibrary.landscape;
+  const node = (land?.nodes ?? []).find((item) => item.id === route.mapNodeId);
+  const path = (land?.paths ?? []).find((item) => item.id === route.mapPathId);
+  const context = { ...route, mapPathId: path?.id ?? null };
+  if (route.mapNodeId && node) {
+    page.appendChild(renderLandscapeLesson(land, node, context));
+    return;
+  }
+  page.appendChild(crumb([{ text: '首页', href: '#/home' }, { text: '知识地图' }]));
+  page.appendChild(el('h1', 'lib-display', '从 AI 到 Agent：知识地图'));
+  page.appendChild(el('p', 'lib-sub', '先看三层知识脉络与节点关系；点击任一节点，进入独立讲解页。'));
+  page.appendChild(renderLandscape(land, context));
+
+  const legacyNodes = renderLibrary.map?.nodes ?? [];
+  if (legacyNodes.length > 0) {
+    const legacy = el('details', 'lib-map-legacy');
+    legacy.appendChild(el('summary', null, '跨工具协作专题关系'));
+    const list = el('div', 'lib-map-legacy-nodes');
+    for (const item of legacyNodes) list.appendChild(renderMapNode(renderLibrary, item));
+    legacy.appendChild(list);
+    const edges = renderLibrary.map?.edges ?? [];
+    if (edges.length > 0) {
+      const edgeList = el('div', 'lib-map-legacy-edges');
+      const nodeById = new Map(legacyNodes.map((item) => [item.id, item]));
+      for (const edge of edges) edgeList.appendChild(renderMapEdge(renderLibrary, edge, nodeById));
+      legacy.appendChild(edgeList);
+    }
+    page.appendChild(legacy);
+  }
+
+  if (Number.isFinite(Number(route.mapScrollY)) && Number(route.mapScrollY) > 0 && typeof window !== 'undefined' && typeof window.scrollTo === 'function') {
+    window.scrollTo(0, Number(route.mapScrollY));
+  }
+}
+
+function renderMapLegacy(container) {
   // renderLibrary 已是本轮生效库（renderApp 经 computeEffective 单入口算出）；地图直接读它。
   const nodes = renderLibrary.map?.nodes ?? [];
   const edges = renderLibrary.map?.edges ?? [];
@@ -3768,7 +4079,6 @@ function renderRoute(container, directionId) {
 
   legacyBody.appendChild(el('h3', 'lib-block-title', '当前研究情况'));
   if (direction.stateOfField) legacyBody.appendChild(el('p', 'lib-para', direction.stateOfField));
-  if (direction.asOf) legacyBody.appendChild(el('p', 'lib-asof', `以上情况的核查截止日期：${direction.asOf}；之后的新工作需另行查新。`));
 
   legacyBody.appendChild(el('h3', 'lib-block-title', '为什么考虑这个方向'));
   if (direction.whyChoose) legacyBody.appendChild(el('p', 'lib-para', direction.whyChoose));
@@ -4248,6 +4558,8 @@ function paperListItem(paper) {
   title.appendChild(paperLink(paper));
   item.appendChild(title);
   item.appendChild(badgeLine(paper));
+  const publication = paperPublicationLabel(paper);
+  if (publication) item.appendChild(el('p', 'lib-res-meta', publication));
   const record = v3StatusOf(paper.id);
   if (record && record.status !== 'unread') {
     item.appendChild(el('p', 'lib-paper-status', `我的状态：${V3_STATUS_LABELS[record.status]}（本人标记）`));
@@ -4315,6 +4627,8 @@ function paperHeader(paper) {
   if (paper.displayTitle) wrap.appendChild(el('p', 'lib-paper-subtitle', paper.displayTitle));
   const meta = el('p', 'lib-metaline');
   meta.appendChild(document.createTextNode(paperBadges(paper).map((b) => b.text).join(' · ')));
+  const publication = paperPublicationLabel(paper);
+  if (publication) meta.appendChild(document.createTextNode(` · ${publication}`));
   const source = paperSourceLink(paper);
   if (source) {
     const a = link(source.href, `论文原文 · ${source.host}`, 'lib-orig');
@@ -4646,11 +4960,9 @@ function materialCoverageRows(material) {
   const c = material.coverage ?? {};
   const rows = [];
   if (c.mode) rows.push(['依据', MATERIAL_COVERAGE_LABELS[c.mode] ?? c.mode]);
-  if (c.basis) rows.push(['来源', c.basis]);
-  if (c.version) rows.push(['版本', c.version]);
+  if (c.basis) rows.push(['来源', readerSourceNote(c.basis)]);
   if (Array.isArray(c.sections) && c.sections.length > 0) rows.push(['实际覆盖', c.sections.join('；')]);
   if (c.limitations) rows.push(['未覆盖', c.limitations]);
-  if (c.checkedAt) rows.push(['整理时间', c.checkedAt]);
   return rows;
 }
 
@@ -4807,7 +5119,7 @@ function renderFoundations(container) {
     el('p', 'lib-intro', renderLibrary.foundations?.intro ?? '不绑定方向的基础经典。'),
   );
   page.appendChild(
-    el('p', 'lib-notice-flat', '这些卡当前都是摘要级判断：身份经 2026-09-15 逐页核查，正文还没有读；建议投入（精读/重点理解）不等于已经读到那个深度。'),
+    el('p', 'lib-notice-flat', '这些条目目前依据摘要整理，尚未逐篇阅读正文；建议投入深度不等于已经读到的程度。'),
   );
   const groups = foundationGroups(renderLibrary);
   if (groups.length === 0) {
@@ -4837,9 +5149,8 @@ function resourceLine(resource, label) {
     ACCESS_LABELS[resource.access],
     resource.language === 'zh' ? '中文' : '英文',
   ].filter(Boolean);
-  if (resource.checkedAt) parts.push(`核查 ${resource.checkedAt}`);
   wrap.appendChild(el('span', 'lib-res-meta', `（${parts.join(' · ')}）`));
-  if (resource.versionNote) wrap.appendChild(el('span', 'lib-res-note', ` ${resource.versionNote}`));
+  if (resource.versionNote) wrap.appendChild(el('span', 'lib-res-note', ` ${readerSourceNote(resource.versionNote)}`));
   return wrap;
 }
 
@@ -5071,7 +5382,7 @@ function renderLearn(container, routeId = null, ctx = {}) {
 function briefPanel(brief) {
   const panel = el('section', 'lib-panel-flat');
   panel.appendChild(el('h3', 'lib-brief-title', `${brief.date} 精选`));
-  panel.appendChild(el('p', 'lib-muted', `整理日期 ${brief.date}（区别于论文发表时间）；覆盖范围：${brief.scope}。`));
+  panel.appendChild(el('p', 'lib-muted', `简报期次：${brief.date}。条目中的发表时间单独标注。`));
   const ol = el('ol', 'lib-brief-items');
   for (const item of brief.items) {
     const li = el('li', 'lib-brief-item');
@@ -5080,7 +5391,7 @@ function briefPanel(brief) {
     if (target?.kind === 'paper') {
       title.appendChild(paperLink(getPaper(renderLibrary, target.paperId)));
     } else if (target?.kind === 'external') {
-      title.appendChild(externalLink(target.href, briefSourceLabel(item, target.href)));
+      title.appendChild(externalLink(target.href, item.displayTitle ?? briefSourceLabel(item, target.href)));
     } else if (target?.kind === 'missing-paper') {
       title.appendChild(el('span', 'lib-unsafe-link', `${item.paperId}（关联论文未接入，内容待修复）`));
     } else if (target?.kind === 'unsafe-source') {
@@ -5090,9 +5401,9 @@ function briefPanel(brief) {
     }
     li.appendChild(title);
     for (const [label, value] of [
-      ['推荐理由', item.reason],
+      ['推荐理由', item.displayReason ?? item.reason],
       ['摘要', item.summary],
-      ['论文时间', item.published],
+      ['发表时间', item.published],
       ['优先级', item.tier],
     ]) {
       if (!value) continue;
@@ -5125,7 +5436,6 @@ function renderDiscoverItem(item) {
   const metaParts = [
     item.authors,
     item.containerTitle,
-    `登记 ${String(item.created ?? '').slice(0, 10)}`,
     item.published?.text ? `发表 ${item.published.text}` : '发表时间未知',
   ].filter(Boolean);
   box.appendChild(el('p', 'lib-res-meta', metaParts.join(' · ')));
@@ -5161,7 +5471,7 @@ function renderDiscoverSection() {
           return;
         }
         const meta = el('p', 'lib-res-meta');
-        meta.textContent = `窗口 ${payload.windowStart} ~ ${payload.windowEnd} · 获取于 ${String(payload.fetchedAt ?? '').slice(0, 16).replace('T', ' ')} · ${payload.cached ? '15 分钟内缓存' : '实时查询'} · 命中 ${payload.count} 条（结构/窗口过滤 ${payload.filteredCount}，主题过滤 ${payload.topicFilteredCount}）`;
+        meta.textContent = `命中 ${payload.count} 条；筛选出 ${payload.topicFilteredCount} 条主题相关结果。各论文发表时间见条目。`;
         resultBox.appendChild(meta);
         resultBox.appendChild(el('p', 'lib-discover-note', payload.registrationNote ?? ''));
         resultBox.appendChild(el('p', 'lib-discover-note', payload.topicFilterNote ?? ''));
@@ -5190,7 +5500,7 @@ function renderBrief(container, briefId = null) {
   page.appendChild(crumb([{ text: '首页', href: '#/home' }, { text: '每日精选', href: '#/brief' }]));
   page.appendChild(el('h2', null, '每日精选'));
   page.appendChild(
-    el('p', 'lib-intro', '这里是工作日更新的定向挑选：每期由每日论文漏斗实际产出，用于感知相关/前沿工作在做什么、用了什么方法——不是今天的阅读作业，通常无需读正文；少量论文每条写明挑选理由；整理日期与论文发表日期分开标注，缺日即当日未产出，不补写。'),
+    el('p', 'lib-intro', '这里精选与研究方向相关的新工作，帮助了解近期研究在解决什么问题、使用什么方法；它是观察窗口，不是每日阅读任务。每条论文单独标注发表时间。'),
   );
   if (renderLibrary.briefs.length === 0) {
     page.appendChild(emptyBox(EMPTY_NOTICES.briefs));
@@ -5282,7 +5592,7 @@ function renderFooterOnce() {
   footer.dataset.rendered = 'true';
   const details = el('details', 'lib-about');
   details.appendChild(el('summary', null, '关于内容与来源'));
-  for (const notice of renderLibrary.meta?.notices ?? []) details.appendChild(el('p', null, notice));
+  for (const notice of renderLibrary.meta?.notices ?? []) details.appendChild(el('p', null, readerSourceNote(notice)));
   // 03 §6：页脚只增加一次的整理依据提示。
   details.appendChild(el('p', null, '整理依据已标明；建议自己看的部分请打开原文。打开网页不会变成已读。'));
   footer.appendChild(details);

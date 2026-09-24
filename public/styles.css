@@ -843,3 +843,92 @@ body.lib ::selection { background: var(--lib-accent); color: #ffffff; }
 @media (max-width: 900px) {
   .lib-land-main { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* PLAN-012：首页入口与知识阅读分层。 */
+.lib-home-reader { max-width: 70rem; }
+.lib-home-lead { margin: 0 0 24px; max-width: 52rem; color: var(--lib-muted); font-size: 17px; }
+.lib-home-start { margin: 0 0 28px; padding: 22px 24px; border-left: 4px solid var(--lib-accent); background: #f0f6f4; }
+.lib-home-start-title { margin: 4px 0 8px; font-family: var(--lib-font-ui); font-size: 23px; }
+.lib-home-start-note { max-width: 54rem; margin: 0 0 14px; }
+.lib-home-reading { margin: 14px 0 0; font-size: 14px; }
+.lib-home-pending { display: block; margin-top: 12px; }
+.lib-home-reader-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
+.lib-home-reader-card { min-width: 0; padding: 18px; border: 1px solid var(--lib-line); background: #fff; }
+.lib-home-reader-title { margin: 0 0 8px; font-family: var(--lib-font-ui); font-size: 18px; }
+.lib-home-reader-note { min-height: 3.5em; margin: 0 0 12px; font-size: 14px; line-height: 1.7; color: var(--lib-muted); }
+.lib-home-reader-sub { margin: 12px 0 0; font-size: 13px; line-height: 1.8; }
+.lib-home-reader-link { font-size: 14px; font-weight: 600; }
+.lib-home-briefs { margin-top: 30px; padding-top: 18px; border-top: 1px solid var(--lib-line); }
+.lib-home-brief-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px; }
+.lib-home-brief-row { margin: 10px 0; line-height: 1.7; }
+.lib-home-brief-reason { color: var(--lib-muted); font-size: 14px; }
+.lib-home-secondary-reader { margin-top: 26px; font-size: 14px; color: var(--lib-muted); }
+
+/* 地图概览使用可读节点卡；节点正文另页呈现，不与整图争空间。 */
+.lib-map-reader { max-width: 76rem; }
+.lib-land-overview { display: grid; gap: 24px; margin: 24px 0; }
+.lib-land-band { padding: 20px; border: 1px solid var(--lib-line); background: #fff; }
+.lib-land-band-title { margin: 0 0 4px; font-family: var(--lib-font-ui); font-size: 21px; }
+.lib-land-band-intro { margin: 0 0 16px; max-width: 64rem; color: var(--lib-muted); font-size: 14px; }
+.lib-land-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.lib-land-card { display: flex; flex-direction: column; gap: 6px; min-width: 0; min-height: 100px; padding: 13px 15px; border: 1px solid var(--lib-line); background: #fbfcfd; color: var(--lib-ink); text-decoration: none; }
+.lib-land-card:hover, .lib-land-card:focus-visible { border-color: var(--lib-accent); background: #f0f6f4; text-decoration: none; }
+.lib-land-card-title { font-size: 16px; line-height: 1.45; }
+.lib-land-card-summary { font-size: 13px; line-height: 1.6; color: var(--lib-muted); }
+.lib-land-subgroups { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
+.lib-land-subgroup { min-width: 0; }
+.lib-land-subgroup-title { margin: 0 0 9px; font-family: var(--lib-font-ui); font-size: 16px; }
+.lib-land-paths { padding: 15px 18px; border: 1px solid var(--lib-line); }
+.lib-land-paths > summary, .lib-map-legacy > summary { cursor: pointer; font-family: var(--lib-font-ui); font-weight: 600; }
+.lib-land-path-option { margin: 16px 0 0; padding-top: 12px; border-top: 1px solid var(--lib-line); }
+.lib-land-path-description { margin: 4px 0 8px; font-size: 14px; color: var(--lib-muted); }
+.lib-land-path-chain { line-height: 1.9; }
+.lib-land-path-link { display: inline-block; padding: 2px 3px; }
+.lib-map-legacy { margin: 26px 0; padding-top: 16px; border-top: 1px solid var(--lib-line); }
+.lib-map-legacy-nodes, .lib-map-legacy-edges { margin-top: 16px; }
+.lib-land-lesson { max-width: 50rem; margin: 0 auto; padding: 14px 0 36px; }
+.lib-land-back { display: inline-block; margin-bottom: 28px; font-size: 15px; }
+.lib-land-lesson-kicker { margin: 0 0 6px; color: var(--lib-muted); font-size: 14px; }
+.lib-land-lesson-title { margin: 0 0 12px; font-size: 34px; line-height: 1.3; }
+.lib-land-lesson-lead { margin: 0 0 30px; font-size: 19px; line-height: 1.8; color: var(--lib-muted); }
+.lib-land-lesson-section { margin: 24px 0; }
+.lib-view h2.lib-land-lesson-heading { margin: 0 0 8px; font-family: var(--lib-font-ui); font-size: 19px; }
+.lib-land-lesson-text { margin: 0; font-family: var(--lib-font-read); font-size: 18px; line-height: 1.9; }
+.lib-land-related { margin: 32px 0 20px; padding-top: 18px; border-top: 1px solid var(--lib-line); }
+.lib-land-related-list { padding-left: 22px; line-height: 1.9; }
+.lib-land-source-brief { margin: 30px 0 0; padding-top: 12px; border-top: 1px solid var(--lib-line); color: var(--lib-muted); font-size: 13px; line-height: 1.7; }
+.lib-land-next { display: inline-block; margin-top: 18px; font-weight: 600; }
+
+/* PLAN-012：桌面地图优先给关系图完整宽度；节点正文由点击后进入的详情页承载。 */
+.lib-map-reader { max-width: 88rem; }
+.lib-land-svg { max-width: none; width: 100%; margin: 18px 0 10px; background: #fff; }
+.lib-land-node { cursor: pointer; }
+.lib-land-dot { r: 18px; }
+.lib-land-label { font-size: 16px; stroke: #fff; stroke-width: 5px; stroke-linejoin: round; paint-order: stroke fill; }
+.lib-land-column-title { font-family: var(--lib-font-ui); font-size: 17px; font-weight: 700; fill: var(--lib-ink); }
+.lib-land-legend { display: flex; gap: 26px; margin: 0 0 18px; color: var(--lib-muted); font-size: 13px; }
+.lib-land-legend-solid::before, .lib-land-legend-dashed::before { content: ""; display: inline-block; width: 30px; margin: 0 8px 4px 0; border-top: 2px solid #2859a6; vertical-align: middle; }
+.lib-land-legend-dashed::before { border-top-style: dashed; border-color: #b07a13; }
+.lib-land-layers { margin-top: 22px; }
+.lib-land-layer { padding: 12px 16px; border: 1px solid var(--lib-line); border-left: 3px solid var(--lib-accent); background: #fff; }
+.lib-land-layer-summary { font-size: 15px; }
+.lib-land-layer-body { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px 12px; }
+.lib-land-item { font-size: 14px; }
+.lib-land-paths { margin-top: 20px; background: #fff; }
+.lib-land-paths > summary { padding: 2px 0; }
+.lib-land-path { padding: 12px 14px; }
+.lib-land-chain { font-size: 14px; }
+@media (max-width: 900px) {
+  .lib-home-reader-grid, .lib-land-subgroups { grid-template-columns: 1fr; }
+  .lib-home-reader-note { min-height: 0; }
+  .lib-land-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 560px) {
+  .lib-home-start { padding: 17px 15px; }
+  .lib-home-reader-card { padding: 15px; }
+  .lib-land-band { padding: 15px 12px; }
+  .lib-land-cards { grid-template-columns: 1fr; }
+  .lib-land-card { min-height: 0; }
+  .lib-land-lesson-title { font-size: 28px; }
+  .lib-land-lesson-text { font-size: 17px; }
+}

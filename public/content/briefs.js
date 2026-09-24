@@ -14,6 +14,8 @@ export const BRIEFS = [
       items: [
         {
           source: 'https://arxiv.org/abs/2609.24971',
+          displayTitle: 'DolphinBench: Mapping the Pareto Frontier of Agent Memory',
+          displayReason: '把任务完成质量与时间、成本放在同一条比较前沿上，直接关联固定预算下的记忆机制比较。',
           reason: '优先关注：命中 llm agent + 记忆两组核心词 + 新基准信号——按任务完成度直接评测记忆，并显式把成本/时间纳入评价前沿（"benchmarks rarely require anything beyond accuracy … allowing memory systems to make unreasonable cost/time tradeoffs"）；与主方向「固定输入/输出预算下比较记忆机制」同题。',
           summary: 'DolphinBench：三个知识工作人格、每人约 50 万 token 用户消息，通过智能体实际完成任务来评记忆，绘制记忆方案的成本—质量前沿。只依据摘要，正文未核对。',
           published: '2026-09-21（arXiv 提交）',
@@ -21,6 +23,8 @@ export const BRIEFS = [
         },
         {
           source: 'https://arxiv.org/abs/2609.24259',
+          displayTitle: 'MemCalib: Benchmarking and Optimizing Memory Use in LLM Agents',
+          displayReason: '关注智能体是否恰当地使用已检索到的记忆，为记忆机制评估补充了“用得是否合适”这一角度。',
           reason: '可以速览：新基准 MemCalib 测「模型给每条在上下文记忆多大影响」——摘要称前沿模型"frequently over-use or under-use memory"；与记忆机制比较相邻，但场景是单模型内的影响度校准。',
           summary: '基于真实记忆系统场景的基准 + 优化算法，测记忆使用是否与每条信息的实际用途匹配。只依据摘要，正文未核对。',
           published: '2026-09-21（arXiv 提交）',
@@ -28,6 +32,8 @@ export const BRIEFS = [
         },
         {
           source: 'https://arxiv.org/abs/2609.24928',
+          displayTitle: 'Trajectory-Aware Benchmark Subset Selection for Cost-Efficient Software Engineering Agent Regression Testing',
+          displayReason: '用执行轨迹挑选回归测试子集，讨论如何在评测成本与覆盖效果之间取舍。',
           reason: '可以速览：第二方向（评价预算）的直接参照——SWE agent 每次更新后的全量基准回归要花数亿 token，作者用智能体轨迹做确定性子集选择替代随机/分层抽样，压低回归测试方差与成本。',
           summary: '轨迹感知的基准子集选择，用于成本可控的软件工程智能体回归测试。只依据摘要，正文未核对。',
           published: '2026-09-21（arXiv 提交）',

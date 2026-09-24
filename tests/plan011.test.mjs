@@ -10,33 +10,30 @@ import assert from 'node:assert/strict';
 import { LIBRARY } from '../public/library-content.js';
 import { validateLibrary } from '../public/library.js';
 
-const GUIDE_IDS = ['land-a5', 'land-a6', 'land-b1', 'land-c2', 'land-c3', 'land-d1', 'land-d2', 'land-d3', 'land-e1', 'land-e2'];
+const GUIDE_IDS = ['land-a1', 'land-a2', 'land-a3', 'land-a4', 'land-a5', 'land-a6', 'land-b1', 'land-b2', 'land-c1', 'land-c2', 'land-c3', 'land-d1', 'land-d2', 'land-d3', 'land-e1', 'land-e2', 'land-e3', 'land-e4', 'land-e5', 'land-f1'];
+const SOURCE_LEVEL_IDS = ['land-a5', 'land-a6', 'land-b1', 'land-c2', 'land-c3', 'land-d1', 'land-d2', 'land-d3', 'land-e1', 'land-e2'];
 const GUIDE_PARTS = ['motivation', 'mechanism', 'example', 'confusion', 'links'];
 
-test('PLAN-011 A1：恰 10 个关键节点带 guide，五段结构齐备、机制段非「术语三句」', () => {
+test('PLAN-011 A1：20 个节点均带 guide，五段结构齐备、机制段非「术语三句」', () => {
   const land = LIBRARY.landscape;
   const withGuide = land.nodes.filter((n) => n.guide != null).map((n) => n.id);
-  assert.deepEqual([...withGuide].sort(), [...GUIDE_IDS].sort(), '带 guide 的节点须恰为选中的 10 个');
+  assert.deepEqual([...withGuide].sort(), [...GUIDE_IDS].sort(), '当前节点讲解覆盖全图 20 个节点');
   for (const id of GUIDE_IDS) {
     const node = land.nodes.find((n) => n.id === id);
     for (const part of GUIDE_PARTS) {
       assert.ok(typeof node.guide[part] === 'string' && node.guide[part].length >= 20, `${id}.guide.${part} 非空且有实质内容`);
     }
     // 审查修复（PLAN-011 修复轮）：guide 节点须有一句常显 sourceBrief（来源＋证据级/关键身份）。
-    assert.ok(typeof node.sourceBrief === 'string' && node.sourceBrief.includes('来源'), `${id} 缺 sourceBrief 常显来源`);
-    assert.ok(/预印本|研究报告|框架级|正文已核|核到摘要/.test(node.sourceBrief), `${id} sourceBrief 须含证据级或关键身份`);
+    assert.ok(typeof node.sourceBrief === 'string' && /来源|参考/.test(node.sourceBrief), `${id} 缺 sourceBrief 常显来源`);
+    if (SOURCE_LEVEL_IDS.includes(id)) {
+      assert.ok(/预印本|研究报告|框架级|正文已核|摘要与元数据|正式版|无独立入选来源/.test(node.sourceBrief), `${id} sourceBrief 须含证据级或关键身份`);
+    }
     // 非「术语三句」回归：机制段须真实解释过程（不少于 60 字），全段总长不设配额上限（写作参考非测试配额）。
     assert.ok(node.guide.mechanism.length >= 60, `${id} 机制段过短，疑似降回术语释义`);
     const total = GUIDE_PARTS.reduce((sum, p) => sum + node.guide[p].length, 0);
     assert.ok(total >= 200 && total <= 2000, `${id} 讲解总长异常（${total}），疑凑数或空壳`);
   }
-  // 其余 10 节点不做 guide，但 limitation 须有一句承接下节点的衔接句。
-  const rest = land.nodes.filter((n) => !GUIDE_IDS.includes(n.id));
-  assert.equal(rest.length, 10, '其余节点恰 10 个');
-  for (const node of rest) {
-    assert.ok(node.guide == null, `${node.id} 不在选中列表，不得带 guide`);
-    assert.ok(node.limitation.includes('衔接'), `${node.id} limitation 缺承接下节点的衔接句`);
-  }
+  assert.equal(land.nodes.filter((n) => n.guide != null).length, land.nodes.length, '全部节点均有完整讲解');
 });
 
 test('PLAN-011 A1：guide 内容纪律——编辑解释只示例标注、不句句声明；数字不超两审计已核范围', () => {

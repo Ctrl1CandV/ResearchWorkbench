@@ -325,7 +325,7 @@ test('REWORK-007（DOM）：论文页正文在前——"我的记录"位于"延�
 
 // ---------- 4) 首页实际渲染 ----------
 
-test('首页（DOM）：四区用途/用法/入口、首读与首次使用全部实际渲染，无假进度措辞', () => {
+test('首页（DOM）：保留四区、首读与丰富内容，删除重复的首次使用流程和维护日期', () => {
   const view = renderAt('#/home');
   const text = view.textContent;
   for (const zone of LIBRARY.home.zones) {
@@ -336,9 +336,8 @@ test('首页（DOM）：四区用途/用法/入口、首读与首次使用全部
     // 首读由区内「建议从这里开始」条目承担；其余区 entryLabel 照常渲染。
     if (zone.key !== 'goal') assert.ok(text.includes(zone.entryLabel), `首页区 ${zone.key} 缺 entryLabel`);
   }
-  for (const step of LIBRARY.home.firstUse) {
-    assert.ok(text.includes(step.title) && text.includes(step.text), `首次使用缺：${step.title}`);
-  }
+  assert.equal(collectByClass(view, 'lib-firstuse').length, 0, '重复的首次使用流程不再占首页空间');
+  assert.ok(!text.includes('内容更新日期'), '首页不展示内容维护时间');
   // 008.2：typed 首读为站内问题导读（材料），链到带路线上下文的材料页。
   const startMaterial = LIBRARY.materials.find((m) => m.id === LIBRARY.home.startHere.materialId);
   assert.ok(text.includes(startMaterial.title), '首读推荐（材料）未渲染');
@@ -394,47 +393,14 @@ test('DG009-B（DOM）：首屏回答「做什么／读什么／怎么读」，�
   }
 });
 
-test('DG009-B（DOM）：地图为两侧文字节点，连线注明语义与来源，未解析条目降级为待查', () => {
+test('DG009-B（DOM）：旧专题图仍保留在折叠次级区，不挤占广域图主体', () => {
   const view = renderAt('#/map');
   const text = view.textContent;
-  // 两侧都在场。
-  assert.ok(text.includes('Agent 研究对象／问题') && text.includes('方法／解决思想'), '地图缺两侧标题');
-  // 每个基线节点渲染一张卡，且都带来源行（provenance）。
-  const nodeCards = collectByClass(view, 'lib-map-node');
-  assert.equal(nodeCards.length, LIBRARY.map.nodes.length, '节点卡数量应与基线地图一致');
-  const sources = collectByClass(view, 'lib-map-source');
-  assert.ok(sources.length >= nodeCards.length, '每个节点应有来源行');
-  assert.ok(sources.every((s) => s.textContent.includes('来源：')), '来源行须以「来源：」开头');
-  // 关系：条数与基线一致，每条带语义标签＋证据＋来源。
-  const edgeRows = collectByClass(view, 'lib-map-edge');
-  assert.equal(edgeRows.length, LIBRARY.map.edges.length, '关系条数应与基线一致');
-  for (const row of edgeRows) {
-    assert.ok(row.textContent.includes('证据（站内已核条目）'), '关系须展示证据');
-    assert.ok(row.textContent.includes('来源：'), '关系须展示来源');
-  }
-  // 「addresses（部分）」限定括注应保留呈现，不把部分回应夸大为完全回应。
-  assert.ok(text.includes('（部分）'), '关系语气的限定括注（部分）应保留');
-  // 同侧关系（depends-on：问题→问题）的两端标签必须按 node.side 派生，不得被硬标成"方法→问题"。
-  const sameSideEdge = LIBRARY.map.edges.find((e) => {
-    const f = LIBRARY.map.nodes.find((n) => n.id === e.from);
-    const t = LIBRARY.map.nodes.find((n) => n.id === e.to);
-    return f && t && f.side === 'problem' && t.side === 'problem';
-  });
-  assert.ok(sameSideEdge, '应存在一条两端同为 problem 侧的关系（depends-on）');
-  const sameFrom = LIBRARY.map.nodes.find((n) => n.id === sameSideEdge.from);
-  const sameTo = LIBRARY.map.nodes.find((n) => n.id === sameSideEdge.to);
-  const sameRow = edgeRows.find((r) => r.textContent.includes(sameFrom.label) && r.textContent.includes(sameTo.label));
-  assert.ok(sameRow, '未找到该同侧关系的渲染行');
-  // 两端都出现"问题："前缀（来自 node.side），绝不被硬标成"方法："。
-  assert.ok(sameRow.textContent.includes(`问题：${sameFrom.label}`) && sameRow.textContent.includes(`问题：${sameTo.label}`), '同侧关系两端应按 side 标为"问题"');
-  assert.ok(!sameRow.textContent.includes(`方法：${sameFrom.label}`) && !sameRow.textContent.includes(`方法：${sameTo.label}`), '同侧关系不得硬标"方法"（B 包审查项）');
-  // PF-07：关系非论文引用；个人进度缺失与未复核状态都显式呈现。
-  assert.ok(text.includes('非论文引用') || text.includes('不是论文之间的真实引用'), '缺 PF-07 关系声明');
-  assert.ok(text.includes('阅读进度') && text.includes('不记录'), '缺个人进度缺失声明');
-  // 未入图方向由当前数据派生（不是写死条目名）：应点名第二 active 方向标题。
-  assert.ok(text.includes('本轮未进入基线的方向') && text.includes('代码智能体的修复正确性'), '未入图方向应数据派生点名');
-  // 关系≠进度：末尾说明节点/边计数不是任何人的进度。
-  assert.ok(text.includes('不是任何人的阅读进度'), '缺计数非进度说明');
+  const legacy = collectByClass(view, 'lib-map-legacy')[0];
+  assert.ok(legacy && !legacy.open, '旧 009 专题图须保留但默认收起');
+  assert.equal(collectByClass(legacy, 'lib-map-node').length, LIBRARY.map.nodes.length, '折叠区仍保留全部专题节点');
+  assert.equal(collectByClass(view, 'lib-land-node').length, LIBRARY.landscape.nodes.length, '主视图应呈现广域图节点');
+  assert.ok(!collectByClass(view, 'lib-land-detailbox').length, '主图页不再并列长篇详情');
 });
 
 test('DG009-B（DOM）：地图未解析 ref／XSS 文本安全降级为纯文本，不产生可点链接或元素', () => {
@@ -745,10 +711,12 @@ test('简报页（DOM，2026-09-22 重组样例）：历史工作日索引按期
   assert.ok(pastText.includes('2026-09-21（本期）'), '直达往期时该期应标为本期');
   assert.ok(pastText.includes('历史工作日'), '往期页也应有索引');
   assert.ok(pastText.includes('DolphinBench'), '09-21 期条目应渲染');
-  // 补记与空窗口口径
-  assert.ok(pastText.includes('回溯补记'), '09-21 期应写明回溯口径');
+  // 读者页面聚焦论文题名与发表时间，不展示整理/抓取流程。
+  assert.ok(pastText.includes('DolphinBench: Mapping the Pareto Frontier of Agent Memory'), '精选应展示论文题名');
+  assert.ok(pastText.includes('发表时间：2026-09-21（arXiv 提交）'), '精选应标注论文发表时间');
+  assert.ok(!pastText.includes('检索：') && !pastText.includes('整理日期'), '不展示检索与整理时间说明');
   const empty = renderAt('#/brief/brief-2026-09-22');
-  assert.ok(empty.textContent.includes('索引滞后'), '空窗口期应写明索引滞后');
+  assert.ok(empty.textContent.includes('2026-09-22 精选'), '空窗口期仍应显示对应期次');
 });
 
 // ---------- 9b) REWORK-007 §1：精选页顺序 ----------
@@ -1530,64 +1498,44 @@ test('PLAN-010（DOM）：新基础导读材料页正文渲染、贯穿例子与
 
 // ---------- PLAN REV001：广域认知脉络图（可点击 SVG + 同源层级文本/节点详解；图文同数据） ----------
 
-test('REV001（DOM）：#/map 广域图为主体——SVG 节点数与数据一致，层级文本同源，旧 009 地图保留为次级区', () => {
+test('PLAN-012（DOM）：#/map 只展示可点击 SVG 图，节点详情不与图同屏', () => {
   const view = renderAt('#/map');
   const text = view.textContent;
-  assert.ok(text.includes('领域认识 · 广域脉络图'), '广域图应为本页主体');
-  assert.ok(text.includes('站内专题认识图'), '旧 009 地图须保留为次级区');
-  assert.ok(text.includes('Agent 研究对象／问题'), '旧图两侧内容仍在');
-  // 图文同数据：SVG 节点数、文本层节点按钮数都与数据一致。
+  assert.ok(text.includes('从 AI 到 Agent：知识地图'), '地图标题应在场');
+  assert.ok(!text.includes('核查截止'), '地图正文不展示核查日期');
   const land = LIBRARY.landscape;
   assert.equal(collectByClass(view, 'lib-land-node').length, land.nodes.length, 'SVG 节点数应与数据一致');
-  let textCount = 0;
-  walk(view, (n) => { if (n.tagName === 'BUTTON' && n.dataset && n.dataset.landId) textCount += 1; });
-  assert.equal(textCount, land.nodes.length, '层级文本节点数应与数据一致（图文同源）');
-  // 详解默认可见（默认选中首节点）。
-  const detail = collectByClass(view, 'lib-land-detail')[0];
-  assert.ok(detail, '缺节点详解面板');
-  for (const field of ['问题', '思想', '例子', '能力变化', '局限', '来源']) {
-    assert.ok(detail.textContent.includes(field), `详解缺字段：${field}`);
-  }
-  // PLAN-011 授权替代说明：学术边来源展示由「审计文档名」改为「文献名映射」（可追溯性在数据字段
-  // source.auditRef，100% 不降级）；断言以读者可见的文献名为准。
+  assert.equal(collectByClass(view, 'lib-land-detailbox').length, 0, '概览页不应显示节点详情');
+  assert.equal(collectByClass(view, 'lib-land-path').length, land.paths.length, '图下保留学习路径索引');
+  assert.equal(collectByClass(view, 'lib-map-legacy').length, 1, '009 专题图仍保留在次级区');
   assert.ok(text.includes('学术关系') && text.includes('Neural-Symbolic Learning and Reasoning'), '学术边须附来源文献名');
   assert.ok(!text.includes('ai-agent-landscape-source-audit'), '内部审计编号不得渲染进页面（PLAN-011）');
-  // PLAN-011 B3：建议阅读顺序边标注为「编辑安排」。
   assert.ok(text.includes('编辑安排'), '阅读顺序边须标注为编辑安排');
-  // 6 条学习路径渲染。
-  assert.equal(collectByClass(view, 'lib-land-path').length, 6, '学习路径应为 6 条');
-  // 审查修复：详解（默认选中首节点）须在学习路径之前渲染，桌面与图并列。
-  assert.ok(text.indexOf('符号与搜索') < text.indexOf('学习路径'), '节点详解应位于学习路径之前（详解放路径前）');
-  const mainBox = collectByClass(view, 'lib-land-main')[0];
-  assert.ok(mainBox, '缺图/详解并列容器');
-  assert.ok(collectByClass(mainBox, 'lib-land-svg').length === 1 && collectByClass(mainBox, 'lib-land-detailbox').length === 1, '图与详解应并列于同一容器');
+  const paths = collectByClass(view, 'lib-land-paths')[0];
+  assert.ok(paths && !paths.open, '学习路径作为辅助内容默认收起');
 });
 
-test('REV001（DOM）：点击与键盘选节点都更新详解；academic/reading 边来源口径正确', () => {
+test('PLAN-012（DOM）：点击与键盘选节点都进入独立详情页，并保留返回地图入口', () => {
   const view = renderAt('#/map');
   const land = LIBRARY.landscape;
   const svgNodes = collectByClass(view, 'lib-land-node');
   const target = land.nodes.find((n) => n.id === 'land-f1');
   const index = land.nodes.indexOf(target);
-  // 点击选中。
   svgNodes[index].listeners.click[0]();
-  let detail = collectByClass(view, 'lib-land-detail')[0];
-  assert.ok(detail.textContent.includes(target.title), '点击后详解应显示目标节点');
-  assert.ok(detail.textContent.includes('协作机制 × 表示组合 × 计费'), 'F1 详解内容');
-  // 键盘 Enter 选中另一个节点。
+  assert.ok(window.location.hash.includes(`node=${target.id}`), '点击应导航至目标节点详情');
+  const detailView = renderAt(window.location.hash);
+  assert.ok(detailView.textContent.includes(target.title), '详情页标题应对应目标节点');
+  assert.ok(detailView.textContent.includes('协作机制 × 表示组合 × 计费'), 'F1 详情正文保留');
+  assert.ok(collectLinks(detailView).some((href) => href.startsWith('#/map')), '详情页提供返回地图入口');
+
+  renderAt('#/map');
   const other = land.nodes.find((n) => n.id === 'land-a4');
   const otherIndex = land.nodes.indexOf(other);
   let prevented = false;
   svgNodes[otherIndex].listeners.keydown[0]({ key: 'Enter', preventDefault: () => { prevented = true; } });
   assert.ok(prevented, 'Enter 应被拦截（避免页面滚动）');
-  detail = collectByClass(view, 'lib-land-detail')[0];
-  assert.ok(detail.textContent.includes('注意力与 Transformer'), '键盘选中后详解应切换');
-  // 选中节点在文本轨高亮。
-  const active = collectByClass(view, 'lib-land-item-active');
-  assert.equal(active.length, 1, '文本轨应恰有一个高亮节点');
-  // reading 边不附来源：F1 详情的 reading 行不得含「来源：」，academic 行必须含。
-  const detailText = detail.textContent;
-  void detailText;
+  assert.ok(window.location.hash.includes(`node=${other.id}`), 'Enter 应导航至对应节点详情');
+  assert.ok(renderAt(window.location.hash).textContent.includes('注意力与 Transformer'), '键盘打开的详情页应显示节点标题');
 });
 
 test('REV001（DOM）：主方向页渲染广域图相关支线预览与进入完整图入口', () => {
@@ -1601,16 +1549,14 @@ test('REV001（DOM）：主方向页渲染广域图相关支线预览与进入�
   assert.ok(view2.textContent.includes('代码智能体与软件工程应用'), 'code 方向预览应含 E5 节点');
 });
 
-test('REV001（DOM）：层级文本按钮点击同样更新详解（图文同数据双向可达）', () => {
+test('PLAN-012（DOM）：图下层级索引的节点入口也进入对应详情页', () => {
   const view = renderAt('#/map');
   const land = LIBRARY.landscape;
-  const buttons = [];
-  walk(view, (n) => { if (n.tagName === 'BUTTON' && n.dataset && n.dataset.landId) buttons.push(n); });
+  const buttons = collectByClass(view, 'lib-land-item');
   const target = land.nodes.find((n) => n.id === 'land-e2');
   buttons[land.nodes.indexOf(target)].listeners.click[0]();
-  const detail = collectByClass(view, 'lib-land-detail')[0];
-  assert.ok(detail.textContent.includes('评测与成本'), '文本轨点击应更新详解');
-  assert.ok(detail.textContent.includes('完成率看不见这笔账'), '详解应含节点实质正文');
+  assert.ok(window.location.hash.includes(`node=${target.id}`), '节点索引点击应导航到详情页');
+  assert.ok(renderAt(window.location.hash).textContent.includes('评测与成本'), '详情页应显示节点正文');
 });
 
 // ---------- PLAN-011 读者体验小幅优化（2026-09-24）：首页去重/单行化、课题页三级+折叠、图谱 guide 优先 ----------
@@ -1665,38 +1611,31 @@ test('PLAN-011（DOM）：课题页三级排布（导读→对照→辅助来源
   }
 });
 
-test('PLAN-011（DOM）：图谱页 guide 优先——讲解直出、字段速览折叠；无讲解节点字段保持直出', () => {
+test('PLAN-011（DOM）：节点讲解在独立详情页完整呈现，地图概览不显示详情', () => {
   const view = renderAt('#/map');
   const land = LIBRARY.landscape;
-  const buttons = [];
-  walk(view, (n) => { if (n.tagName === 'BUTTON' && n.dataset && n.dataset.landId) buttons.push(n); });
-  const clickNode = (id) => {
+  assert.equal(collectByClass(view, 'lib-land-detailbox').length, 0, '图页不呈现并列详情');
+  const openNode = (id) => {
     const target = land.nodes.find((n) => n.id === id);
-    buttons[land.nodes.indexOf(target)].listeners.click[0]();
-    return collectByClass(view, 'lib-land-detail')[0];
+    return renderAt(`#/map?node=${target.id}`);
   };
-  // 有 guide 的节点（land-a5）：讲解段落直出，六字段收进折叠速览。
-  let detail = clickNode('land-a5');
-  assert.equal(collectByClass(detail, 'lib-land-guide').length, 1, 'guide 讲解块应在场');
-  assert.ok(detail.textContent.includes('猜下一个词'), 'guide 机制段应直接可读');
-  // 审查修复 2：guide 下常显一句来源＋证据级/关键身份；完整来源在折叠速览内。
-  const brief = collectByClass(detail, 'lib-land-source-brief');
-  assert.equal(brief.length, 1, 'guide 节点应常显简短来源行');
-  assert.ok(brief[0].textContent.includes('来源') && brief[0].textContent.includes('研究报告'), '常显来源须含来源名与证据级/身份');
-  const fieldsWrap = collectByClass(detail, 'lib-land-fields-wrap')[0];
-  assert.ok(fieldsWrap, '有讲解时字段应收进折叠速览');
-  assert.ok(!fieldsWrap.open, '字段速览应默认收起（guide 优先，避免双重全量展开）');
-  assert.ok(fieldsWrap.textContent.includes('问题') && fieldsWrap.textContent.includes('来源'), '速览折叠内仍含六字段');
-  // 无 guide 的节点（land-a1）：字段保持直出，不套折叠。
-  detail = clickNode('land-a1');
-  assert.equal(collectByClass(detail, 'lib-land-guide').length, 0, '无讲解节点不应渲染 guide 块');
-  assert.equal(collectByClass(detail, 'lib-land-fields-wrap').length, 0, '无讲解节点字段保持直出');
-  assert.ok(collectByClass(detail, 'lib-land-fields').length === 1, '无讲解节点字段表应在场');
-  // 学术边在详解中显示来源文献名（land-a1 的相连学术边）。
+  // 当前已补齐讲解的节点（land-a5）：详情页保持五段讲解。
+  let detailView = openNode('land-a5');
+  let detail = collectByClass(detailView, 'lib-land-lesson')[0];
+  assert.ok(detail && detail.textContent.includes('猜下一个词'), 'guide 机制段应直接可读');
+  assert.equal(collectByClass(detail, 'lib-land-lesson-section').length, 5, '详情页按现有结构呈现五段讲解');
+  assert.equal(collectByClass(detail, 'lib-land-source-brief').length, 1, '详情页保留简短来源行');
+  // 详情正文沿用现有版本；其它节点也通过独立路由进入。
+  detailView = openNode('land-a1');
+  detail = collectByClass(detailView, 'lib-land-lesson')[0];
+  assert.ok(detail && detail.textContent.includes('符号与搜索'), '节点详情页路由有效');
+  assert.ok(collectByClass(detail, 'lib-land-lesson-section').length >= 4, '节点讲解内容保持显示');
+  // 学术边在详情中显示来源文献名。
   assert.ok(detail.textContent.includes('Neural-Symbolic Learning and Reasoning'), '学术边来源应为文献名');
-  // 编辑边显示「建议的阅读顺序（编辑安排）」——land-a1 无编辑边，切到 land-f1 断言。
-  detail = clickNode('land-f1');
-  assert.ok(detail.textContent.includes('建议的阅读顺序（编辑安排）'), '编辑边应标注为编辑安排');
+  // 编辑边显示「建议的阅读顺序（编辑安排）」。
+  detailView = openNode('land-f1');
+  detail = collectByClass(detailView, 'lib-land-lesson')[0];
+  assert.ok(detail.textContent.includes('推荐阅读顺序'), '详情页应保留推荐阅读关系');
 });
 
 test('PLAN-011（DOM）：首页/图谱/课题页主文案不泄露内部编号与契约词', () => {

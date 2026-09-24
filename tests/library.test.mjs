@@ -751,7 +751,7 @@ test('paperOutline：deep 卡目录含概览/先修/章节/细读/文献/待核/
 
 test('coverageRows 与 paperSourceLink：来源信息完整，外链仅 https', () => {
   const rows = coverageRows(getPaper(LIBRARY, 'astute-rag'));
-  assert.deepEqual(rows.map(([label]) => label), ['依据', '来源', '版本', '实际覆盖', '未覆盖', '核查时间']);
+  assert.deepEqual(rows.map(([label]) => label), ['依据', '来源', '实际覆盖', '未覆盖']);
   assert.deepEqual(paperSourceLink(getPaper(LIBRARY, 'tosem2025-acceptance')), {
     href: 'https://nmaguirre.github.io/assets/pdf/tosem2025.pdf',
     host: 'nmaguirre.github.io',
@@ -803,11 +803,11 @@ test('library.js 无 HTML 注入面：不存在 innerHTML/outerHTML 赋值与 in
   assert.doesNotMatch(source, /\bsrcdoc\b\s*=/);
 });
 
-test('页内目录真实滚动且不与 hash 路由冲突：button + scrollIntoView，源码不改写 location.hash', async () => {
+test('页内目录仍用按钮滚动；地图节点另用 hash 进入独立详情', async () => {
   const source = await readPublic('library.js');
   assert.match(source, /el\('button'/);
   assert.match(source, /scrollIntoView\(/);
-  assert.doesNotMatch(source, /location\.hash\s*=/);
+  assert.match(source, /window\.location\.hash\s*=\s*mapHash\(/);
   assert.match(source, /setAttribute\('aria-label', '本页目录'\)/);
   for (const anchor of ['lib-sec-overview', 'lib-sec-deep', 'lib-sec-questions', 'lib-sec-next']) {
     assert.ok(source.includes(`'${anchor}'`), anchor);
@@ -828,7 +828,6 @@ test('可见文案与交互入口（源码级）：首页四区、方向说明�
     '建议先读',
     '这个方向研究什么',
     '当前研究情况',
-    '以上情况的核查截止日期',
     '为什么考虑这个方向',
     '难点与不适用条件',
     '按阶段阅读',
@@ -838,7 +837,6 @@ test('可见文案与交互入口（源码级）：首页四区、方向说明�
     '主资源',
     '何时跳过',
     '来源与覆盖',
-    '第一次使用',
     '本页目录',
     '论文原文',
     '上一篇',
