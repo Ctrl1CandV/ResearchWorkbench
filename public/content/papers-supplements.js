@@ -212,7 +212,7 @@ export const SUPPLEMENT_PAPERS = [
       importance: 'core',
       difficulty: 'needs_background',
       role: 'foundation',
-      roleReason: '方向一事实上的标准评价台：“修复正确”的现代操作定义（fail-to-pass 与 pass-to-pass）出自这里。',
+      roleReason: '方向一事实上的标准评价台：“修复正确”的现代操作定义出自这里（判定测试的具体口径属正文，本卡摘要级、待核）。',
       recommendedDepth: 'deep',
       deliveredDepth: 'quick',
       templateVersion: 1,
@@ -224,22 +224,22 @@ export const SUPPLEMENT_PAPERS = [
       ],
       coverage: {
         mode: 'abstract',
-        basis: 'arXiv 摘要页（2026-09-15 核查）',
-        version: 'arXiv:2310.06770（v1 2023-10-10；v3 2024-11-11；comments 标注 ICLR 2024 与 OpenReview 链接）',
+        basis: 'arXiv 摘要页（2026-09-15 核查；2026-09-23 009-A 复核身份、v1/v2/v3 版本与 ICLR 2024 comments，并逐句复读当前 v3 摘要）。摘要可证：任务取自 12 个 Python 仓库的真实 issue 与对应 PR；模型的任务是编辑代码库解决 issue；难点在跨函数/类/文件的协调；评测显示当时最强模型只解出极少数 issue。009-A 发现：当前 v3 摘要没有说明判定机制——“运行测试、失败转通过/通过保通过（fail-to-pass / pass-to-pass）”属正文内容，本卡按摘要级纪律一律标待核，不冒充已证。',
+        version: 'arXiv:2310.06770（v1 2023-10-10；v2 2024-04-05；v3 2024-11-11；comments 标注 ICLR 2024 与 OpenReview 链接）',
         sections: [],
-        limitations: '仅摘要级判断；未读正文；不引用摘要中的具体数字。',
-        checkedAt: '2026-09-15',
+        limitations: '仅摘要级判断；未读正文；不引用摘要中的具体数字（任务规模与模型通过率先不引，读全文时定位）；判定测试的构造与术语以正文为准，本卡不代证。',
+        checkedAt: '2026-09-23',
       },
       lead:
-        '只凭摘要说：SWE-bench 用真实 GitHub issue 与对应 PR 构造软件工程任务，模型需要修改代码库解决 issue，并用失败转通过、通过保通过两类测试判定“解决了没有”。放在方向一“建立问题”阶段：它给出的是“修复正确”在现代代码智能体语境下的评价定义——这与 TOSEM 2025 讨论的“测试通过不等于修复正确”是同一条线的两端。注意：只依据摘要，正文没有读。',
+        '只凭摘要说：SWE-bench 用真实 GitHub issue 与对应 PR 构造软件工程任务，模型需要修改代码库解决 issue，难点是跨函数、跨文件的协调。“解决了没有”如何被判定——测试构造的细节——摘要没有讲，属正文待核（常见表述“失败转通过/通过保通过”本卡未证）。放在方向一“建立问题”阶段：它是“修复正确”在现代代码智能体语境下的评价台入口——这与 TOSEM 2025 讨论的“测试通过不等于修复正确”是同一条线的两端。注意：只依据摘要，正文没有读。',
       learner: {
-        gist: '真实 GitHub issue + 对应 PR 构造任务；失败转通过（fail-to-pass）与通过保通过（pass-to-pass）两类测试判定“解决了没有”。',
+        gist: '真实 GitHub issue + 对应 PR（12 个 Python 仓库）构造任务；模型编辑代码库解决 issue。判定“解决了没有”的具体测试机制（如两类测试）不在当前摘要里，属正文、待核。',
         value: '主方向两篇换手论文（Tax/Debt）都在同类软件修复任务上做实验；不懂台子的判据就读不懂它们的设置。',
-        intent: '只建立评价定义：任务从哪来、两类测试各防哪种误判；不读榜、不引用摘要数字。',
+        intent: '只建立评价定义的入口：任务从哪来（issue-PR 对）、知道判定要靠可执行测试；两类测试各防哪种误判属正文细节，第一次读先标待核，不读榜、不引用摘要数字。',
       },
       readingActions: {
         preserve: [
-          { target: '任务构造：issue-PR 对与两类测试的判据', why: '这是读 Tax/Debt 实验设置的必要底座。' },
+          { target: '任务构造：真实 issue 与对应 PR（12 个 Python 仓库）', why: '这是读 Tax/Debt 实验设置（同类软件任务）的必要底座；测试判据细节取全文时核对。' },
         ],
         skip: [
           { target: '排行榜与具体模型分数', why: '本卡只取评价定义；榜单数字未经正文核对。' },
@@ -252,7 +252,7 @@ export const SUPPLEMENT_PAPERS = [
       ],
       openQuestions: [],
       questions: [
-        'fail-to-pass 与 pass-to-pass 各自防止什么误判？取全文时先核对任务筛选与测试构造流程。',
+        '任务从哪来（issue-PR 对、哪些仓库）？判定用哪两类测试、各防哪种误判？——两类测试的措辞属正文，取全文时核对任务筛选与测试构造流程。',
       ],
       next: { note: '读完定义后看方法：SWE-agent 是在这个评价台上跑起来的代表系统。', paperId: 'swe-agent' },
     },
@@ -317,11 +317,11 @@ export const SUPPLEMENT_PAPERS = [
       ],
       coverage: {
         mode: 'abstract',
-        basis: 'arXiv 摘要页（2026-09-15 核查）',
+        basis: 'arXiv 摘要页（2026-09-15 核查；2026-09-23 009-A 复读当前摘要：三阶段（localization、repair、patch validation）与「不让 LLM 自主决定行动/不用复杂工具」的表述、在 SWE-bench Lite 上评估并按人工分类过滤问题条目构造更严格子集，均见于摘要；性能与成本数字在摘要中但按纪律不引）。',
         version: 'arXiv:2407.01489（v1 2024-07-01；v2 2024-10-29；arXiv 页未标注录用信息；外部检索指向 ICSE 2025，未在 arXiv 页确认）',
         sections: [],
-        limitations: '仅摘要级判断；未读正文；录用信息以正式版本为准。',
-        checkedAt: '2026-09-15',
+        limitations: '仅摘要级判断；未读正文；不引用摘要中的性能与成本数字；录用信息以正式版本为准。',
+        checkedAt: '2026-09-23',
       },
       lead:
         '只凭摘要说：Agentless 不让模型自主决定行动，只用定位、修复、补丁验证三个阶段，就在 SWE-bench Lite 上达到了与复杂 agent 可比的结果，并且成本更低；作者还人工分类了基准中的问题条目，构造了更严格的子集。放在“看评价与反例”阶段：它是方向一“验证预算”讨论的天然对照——少做事、做哪些事，本身就是预算分配。注意：只依据摘要，正文没有读。',

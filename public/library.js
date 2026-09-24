@@ -28,12 +28,40 @@ import {
   setPaperNote,
   setPaperStatus,
 } from './notes.js';
+// DYNAMIC-GUIDANCE-009 / C 包：导学提案闭环（public/guidance.js）。渲染层对生效值与覆盖层的
+// 一切读取都经这里注入的接缝（currentGuidanceOverlay / computeEffective），不做第二存储键。
+import {
+  EXAMPLE_BANNER_TEXT,
+  FIELD_LABELS,
+  GUIDANCE_KEY,
+  ORIGIN_SOURCE_LABELS,
+  adjustLabel,
+  applyProposal,
+  canUndo,
+  canonicalBaseline,
+  compareImport,
+  computeEffective as guidanceComputeEffective,
+  currentOverlay,
+  exportOverlayText,
+  importReplaceOverlay,
+  loadOverlay,
+  overlayEntry,
+  parseImportedOverlay,
+  readProposalFileText,
+  resetCorruptOverlay,
+  resetOverlay,
+  targetLabel,
+  undoLastApply,
+  validateProposal,
+} from './guidance.js';
 
-// 渲染数据源：缺省为真实 LIBRARY；测试可用 __setRenderLibrary 换成小型 fixture 库
-// 来验证新材料/论文混合路线与 featured 布局，不影响纯函数与本人记录（记录仍锚定真实库）。
+// 渲染数据源：renderBase 是基线（真实 LIBRARY 或测试 fixture），renderLibrary 是每轮渲染前
+// 由 computeEffective(renderBase, 覆盖层) 算出的生效库（C 包；无覆盖层时与基线同一引用）。
+let renderBase = LIBRARY;
 let renderLibrary = LIBRARY;
 export function __setRenderLibrary(lib) {
-  renderLibrary = lib && typeof lib === 'object' ? lib : LIBRARY;
+  renderBase = lib && typeof lib === 'object' ? lib : LIBRARY;
+  renderLibrary = renderBase;
 }
 
 // ---------- 标签与固定文案 ----------
@@ -127,6 +155,10 @@ export const EMPTY_NOTICES = Object.freeze({
 
 const NAV_ACTIVE_BY_VIEW = Object.freeze({
   home: 'home',
+  // B 包：领域地图从首页首屏「打开地图」进入，归首页导航（导航保持六入口，DESIGN 不变）。
+  map: 'home',
+  // C 包：导学调整页同理归首页项（不新增侧栏入口，保持导航六项）。
+  guidance: 'home',
   directions: 'directions',
   route: 'directions',
   papers: 'papers',
@@ -171,6 +203,49 @@ export const MATERIAL_COVERAGE_LABELS = Object.freeze({
   'editorial-primer': '站内编辑说明',
   identity: '身份待核',
 });
+
+// ---------- DYNAMIC-GUIDANCE-009 / B 包：地图渲染常量（语义与来源词表，R1/R4） ----------
+// meaning 固定五值词汇（R1）；显示为中文标签，边原文仍保留在数据里。
+export const MAP_MEANING_LABELS = Object.freeze({
+  addresses: '回应（方法→问题）',
+  'variant-of': '变体',
+  conflicts: '与直觉相抵',
+  'depends-on': '依赖',
+  inspires: '启发',
+});
+// source.originType 封闭枚举 → 中文标签（仅 UI 映射，与提案 origin.sourceType 同一词表，R1/R4）。
+export const MAP_ORIGIN_LABELS = Object.freeze({
+  content: '内容条目（站内已核）',
+  advisor: '导师转述',
+  ai: 'AI 建议',
+  self: '本人陈述',
+});
+export const MAP_SIDE_LABELS = Object.freeze({ problem: 'Agent 研究对象／问题', method: '方法／解决思想' });
+// 边两端的简短侧别标签：一律由 node.side 派生，绝不假设"from=方法、to=问题"
+// （depends-on 等关系可能两端同侧，硬标会错——B 包审查项）。
+const MAP_SIDE_SHORT = Object.freeze({ problem: '问题', method: '方法' });
+function mapSideLabel(node) {
+  return node && MAP_SIDE_SHORT[node.side] ? MAP_SIDE_SHORT[node.side] : '节点';
+}
+// 页面级来源声明（B 包固定文案；关系≠引用）。
+export const MAP_PROVENANCE_NOTE =
+  '本图是小型文字地图：节点与连线只表示编辑排定的概念关联，不是论文之间的真实引用关系；每条来源标注其性质与日期。';
+// 个人进度缺失的显式声明（不显示任何已读/进度；R2「没有个人记录时不暗示已读」）。
+export const MAP_NO_PROGRESS_NOTE =
+  '地图与关系不记录、也不显示任何人的阅读进度或已读状态：这里只有认识结构与来源，打开本页不改变任何本人标记。';
+// 未复核来源状态的显式呈现（R7）：通用规则；具体"哪个 active 方向未入图"由 renderMap 按当前数据派生，
+// 不把条目名写死在此（避免数据变化后文案变陈旧——B 包审查项：source pinning）。
+export const MAP_UNREVIEWED_NOTE =
+  '未连接的开放问题只作为问题文字呈现，不画线、不暗示连接：只有来源核查为「保留可用」的条目才进入节点与连线。';
+// 覆盖层尚未接入前的基线范围声明（含核查日期锚点，随内容工作刷新）。
+export const MAP_BASELINE_SCOPE_NOTE =
+  '上图是当前基线地图（核查至 2026-09-23 的 R7 复核）；某 active 方向若其来源条目为「保留收窄／正文待核」，本轮不进入基线，待复核正文后经内容工作补入。';
+
+// PLAN-011：内部契约词（如 PF-07 编号）保留在数据字段与测试断言中，不进入读者可见文本；
+// 渲染时从来源注记里剥离。仅做精确短串剥离，不改写数据本身（009 地图数据契约不降级）。
+function readerSourceNote(note) {
+  return String(note ?? '').replace(/（PF-07）/g, '').replace(/\(PF-07\)/g, '');
+}
 
 // 多智能体贯通教材的唯一允许路径与章节标识（04 §2.1；labPath 仅允许这个精确值）。
 export const MULTIAGENT_LAB_PATH = '/learning/multiagent-lab.md';
@@ -265,7 +340,7 @@ export function parseHash(raw) {
     });
   if (parts.some((p) => p === null || p === '' || p === '.' || p === '..')) return null;
   const [view, id] = parts;
-  const listViews = ['home', 'directions', 'papers', 'learn', 'brief', 'foundations'];
+  const listViews = ['home', 'map', 'guidance', 'directions', 'papers', 'learn', 'brief', 'foundations'];
   let parsed = null;
   if (parts.length === 1 && listViews.includes(view)) {
     parsed = { view, id: null };
@@ -581,6 +656,8 @@ function normalizeStep(lib, step, i) {
     id: step?.id,
     index: i + 1,
     kind: step?.kind,
+    // C 包（R6）：覆盖层插入/调整的条目持久携带 example 标记，渲染与首页推导都要看到它。
+    ...(step?.example === true ? { example: true } : {}),
     external: false,
     target,
     paperId: step?.paperId,
@@ -1476,6 +1553,87 @@ export function validateLibrary(lib) {
     push(`home.startHerePaperId 无法解析：${lib.home.startHerePaperId}`);
   }
 
+  // ---------- landscape（PLAN REV001；可选：nodes 为空时视为未接入，不报错） ----------
+  if (lib.landscape != null) {
+    const land = lib.landscape;
+    if (typeof land !== 'object' || isArr(land)) {
+      push('landscape 必须是对象');
+    } else if (Array.isArray(land.nodes) && land.nodes.length > 0) {
+      // 层：至少一层，id/title/summary 齐备。
+      const layers = land.layers ?? [];
+      if (!isArr(layers) || layers.length === 0) push('landscape.nodes 非空时 layers 必须非空');
+      const layerIds = new Set();
+      for (const layer of layers) {
+        if (!isStr(layer?.id) || !isStr(layer?.title) || !isStr(layer?.summary)) {
+          push(`landscape.layers 条目需要 id/title/summary：${layer?.id ?? '?'}`);
+        } else if (layerIds.has(layer.id)) push(`landscape.layers id 重复：${layer.id}`);
+        else layerIds.add(layer.id);
+      }
+      // 节点：20–26；字段齐备；id 命名空间；前后关系由边表达。
+      const LAND_ID = /^land-[a-z0-9][a-z0-9.-]{1,47}$/;
+      const landNodes = land.nodes;
+      if (landNodes.length < 20 || landNodes.length > 26) {
+        push(`landscape 节点数须为 20–26（REV001），当前 ${landNodes.length}`);
+      }
+      if (layers.length > 0 && layerIds.has(layers[0].id)) {
+        const bgCount = landNodes.filter((n) => n?.layer === layers[0].id).length;
+        if (bgCount < 6 || bgCount > 8) push(`landscape 首层（AI 背景）节点须 6–8，当前 ${bgCount}`);
+      }
+      const landIds = new Set();
+      for (const node of landNodes) {
+        const at = `landscape.nodes（${node?.id ?? '?'}）`;
+        if (!isStr(node?.id) || !LAND_ID.test(node.id)) push(`${at} id 须匹配 ${LAND_ID}`);
+        else if (landIds.has(node.id)) push(`${at} id 重复：${node.id}`);
+        else landIds.add(node.id);
+        if (!layerIds.has(node?.layer)) push(`${at} layer 未登记：${node?.layer ?? '?'}`);
+        for (const field of ['title', 'when', 'problem', 'idea', 'example', 'capability', 'limitation']) {
+          if (!isStr(node?.[field])) push(`${at} 缺少 ${field}`);
+        }
+        if (!node?.source || typeof node.source !== 'object' || !isStr(node.source.note) || !isStr(node.source.asOf)) {
+          push(`${at} 需要 source{note, asOf}（来源可核查）`);
+        }
+        if (node?.topics != null && (!isArr(node.topics) || !node.topics.every(isStr))) {
+          push(`${at} topics 必须是字符串数组`);
+        }
+      }
+      // 边：academic 必须附审计来源；reading 只给编辑理由、不得附来源（无伪来源）。
+      const landEdges = land.edges ?? [];
+      const seenEdges = new Set();
+      for (const edge of landEdges) {
+        const at = `landscape.edges（${edge?.id ?? '?'}）`;
+        if (!isStr(edge?.id)) push(`${at} 缺少 id`);
+        else if (seenEdges.has(edge.id)) push(`${at} id 重复：${edge.id}`);
+        else seenEdges.add(edge.id);
+        if (!landIds.has(edge?.from) || !landIds.has(edge?.to)) push(`${at} 端点须为已登记节点：${edge?.from ?? '?'} → ${edge?.to ?? '?'}`);
+        if (!['academic', 'reading'].includes(edge?.kind)) push(`${at} kind 必须是 academic|reading：${edge?.kind}`);
+        if (edge?.kind === 'academic') {
+          if (!edge?.source || !isStr(edge.source.note) || !isStr(edge.source.asOf)) {
+            push(`${at} academic 边必须附审计来源 source{note, asOf}`);
+          }
+        }
+        if (edge?.kind === 'reading') {
+          if (!isStr(edge?.note)) push(`${at} reading 边必须给出编辑理由 note`);
+          if (edge?.source != null) push(`${at} reading 边不得附来源（只给编辑理由，拒绝伪来源）`);
+        }
+      }
+      // 学习路径：4–6 条，节点引用可解析。
+      const landPaths = land.paths ?? [];
+      if (landPaths.length < 4 || landPaths.length > 6) push(`landscape 学习路径须 4–6 条（REV001），当前 ${landPaths.length}`);
+      for (const path of landPaths) {
+        const at = `landscape.paths（${path?.id ?? '?'}）`;
+        for (const field of ['id', 'title', 'description']) if (!isStr(path?.[field])) push(`${at} 缺少 ${field}`);
+        if (!isArr(path?.nodeIds) || path.nodeIds.length < 1) push(`${at} nodeIds 至少 1 个节点（路径 F 为单节点映射落点，合法）`);
+        else {
+          for (const ref of path.nodeIds) {
+            if (!landIds.has(ref)) push(`${at} nodeIds 无法解析：${ref}`);
+          }
+        }
+      }
+    } else if (land.nodes != null && !isArr(land.nodes)) {
+      push('landscape.nodes 必须是数组（空数组＝未接入过渡态）');
+    }
+  }
+
   return { ok: errors.length === 0, errors };
 }
 
@@ -1543,6 +1701,56 @@ function v3Available() {
 function v3StatusOf(paperId) {
   if (!v3Available()) return null;
   return getPaperRecord(v3Runtime.state, paperId);
+}
+
+// 本人记录总览（首页"我的记录"用；B-Q1 修复：不再把"没有在读"误判为"没有记录"）。
+// 返回：unavailable/corrupt（存储不可读，显式声明读不到，绝不称"尚无"）；
+// 或各计数 + hasAny（是否存在任何本人手动标记：状态≠未读、有问题/笔记、或待读清单非空）。
+function v3RecordSummary() {
+  if (!v3Available()) {
+    return {
+      readable: false,
+      unavailable: v3Runtime.kind === 'unavailable',
+      corrupt: v3Runtime.kind === 'corrupt',
+      reading: 0,
+      done: 0,
+      noted: 0,
+      list: 0,
+      hasAny: false,
+    };
+  }
+  const papers = v3Runtime.state?.papers ?? {};
+  let reading = 0;
+  let done = 0;
+  let noted = 0;
+  let hasAny = false;
+  for (const rec of Object.values(papers)) {
+    if (!rec) continue;
+    if (rec.status === 'reading') {
+      reading += 1;
+      hasAny = true;
+    } else if (rec.status === 'done') {
+      done += 1;
+      hasAny = true;
+    }
+    const hasText = String(rec.question ?? '').trim() !== '' || String(rec.note ?? '').trim() !== '';
+    if (hasText) {
+      noted += 1;
+      hasAny = true;
+    }
+  }
+  const list = Array.isArray(v3Runtime.state?.readingList) ? v3Runtime.state.readingList.length : 0;
+  if (list > 0) hasAny = true;
+  return { readable: true, unavailable: false, corrupt: false, reading, done, noted, list, hasAny };
+}
+
+// 仅测试用的渲染数据源接缝（与 __setRenderLibrary 同类：验证 v3 读取分支，不写盘、不接入 C 覆盖层）。
+export function __setV3ForTest(kind, state) {
+  v3Runtime.kind = kind;
+  v3Runtime.state = state;
+}
+export function __getV3ForTest() {
+  return { kind: v3Runtime.kind, state: v3Runtime.state };
 }
 
 // 保存并整体重渲染；失败时在页面顶部给出明确错误，不静默。
@@ -1864,10 +2072,16 @@ function homeZone(zone, body) {
   const section = el('section', `lib-zone lib-zone-${zone.key}`);
   const head = el('div', 'lib-zone-head');
   head.appendChild(el('h3', 'lib-zone-title', zone.title));
-  head.appendChild(link(zone.entryHash, zone.entryLabel, 'lib-zone-entry'));
+  // PLAN-011 审查修复（去重仅限主推荐语义角色）：goal 区头不再重复「打开主方向路线」入口——
+  // 区内的真正首读/继续读条目保留，topic 区保留课题探索链接；不加新路由功能。
+  if (zone.key !== 'goal') head.appendChild(link(zone.entryHash, zone.entryLabel, 'lib-zone-entry'));
   section.appendChild(head);
-  section.appendChild(el('p', 'lib-zone-purpose', zone.purpose));
-  section.appendChild(el('p', 'lib-zone-how', zone.howToUse));
+  // PLAN-011 B1：purpose+howToUse 合并为一行「这区是什么 · 什么时候用」，减少双段重复说明。
+  const about = el('p', 'lib-zone-about');
+  about.appendChild(document.createTextNode(`${zone.purpose}　`));
+  const when = el('span', 'lib-zone-about-when', zone.howToUse);
+  about.appendChild(when);
+  section.appendChild(about);
   if (body) section.appendChild(body);
   return section;
 }
@@ -1899,6 +2113,272 @@ function stepHref(directionId, track, step) {
   return null;
 }
 
+// ---------- DYNAMIC-GUIDANCE-009 / B+C 包：导学生效值接缝 + 地图/首屏解析辅助 ----------
+// 生效值单入口（R5 single overlay source）：页面任何位置读取"生效值"只经 computeEffective(base, overlay)
+// 一个入口；C 包在此接入 research-workbench:guidance:v1（guidance.js 负责解析/校验/物化），
+// 渲染层不出现第二存储键、不缓存第二副本。存储损坏/不可用 ⇒ 覆盖层按 null 降级为基线显示，
+// 「导学调整」页给出明确文案与坏档导出；本人 v3 记录不受影响。
+
+// 覆盖层唯一读取入口：无有效变更（空存储/仅无条目/损坏/不可用）⇒ null（＝基线）。
+export function currentGuidanceOverlay() {
+  if (typeof window === 'undefined' || !window.localStorage) return null;
+  try {
+    // B1：渲染读取也带基线做完整校验（手工改存储/导入坏档 ⇒ corrupt ⇒ 按基线降级显示）。
+    return currentOverlay(window.localStorage, renderBase);
+  } catch {
+    return null;
+  }
+}
+
+// 生效视图：委托 guidance.computeEffective（纯函数）。overlay 为 null ⇒ 生效值＝基线（透传引用）。
+export function computeEffective(base, overlay = currentGuidanceOverlay()) {
+  return guidanceComputeEffective(base, overlay);
+}
+
+// 找到覆盖某 id 的路线步骤（含所属方向与 track），用于地图 step-* ref 的站内定位。
+function findStepById(lib, stepId) {
+  if (typeof stepId !== 'string' || !stepId) return null;
+  for (const direction of lib.directions ?? []) {
+    for (const track of ['start', 'archive']) {
+      const step = trackEntries(lib, direction.id, track).find((s) => s.id === stepId);
+      if (step) return { step, direction, track };
+    }
+  }
+  return null;
+}
+
+// 把地图节点 ref / 边 evidence 的站内 id 解析为可点入口（paper/material/direction/tech-route/step-*）。
+// 解析不了返回 null：渲染层据此降级为纯文本"待查问题"，不画线、不产生假链接（R1 渲染层校验）。
+export function resolveMapRef(lib, id) {
+  if (typeof id !== 'string' || !id) return null;
+  const paper = getPaper(lib, id);
+  if (paper) return { kind: 'paper', label: paper.displayTitle || paper.title, href: buildHash('paper', paper.id) };
+  const material = getMaterial(lib, id);
+  if (material) return { kind: 'article', label: material.title, href: buildHash('material', material.id) };
+  const direction = getDirection(lib, id);
+  if (direction) return { kind: 'direction', label: direction.title, href: buildHash('route', direction.id) };
+  const tech = getTechnicalRoute(lib, id);
+  if (tech) return { kind: 'tech-route', label: tech.title, href: buildHash('learn', tech.id) };
+  if (id.startsWith('step-')) {
+    const located = findStepById(lib, id);
+    if (!located) return null;
+    const href = stepHref(located.direction.id, located.track, located.step);
+    const label = located.step?.resolved?.title ?? id;
+    return { kind: 'step', stepId: id, label, href: href ?? null };
+  }
+  return null;
+}
+
+// meaning 词表以固定词汇开头（R1）；返回 { vocab, vocabLabel, note } 供渲染逐条显示语义。
+// 允许词汇后紧跟限定括注（如 "addresses（部分）："），解析时剥掉该括注与冒号，只留语义注记。
+export function parseMapMeaning(meaning) {
+  const text = String(meaning ?? '');
+  const match = text.match(/^(variant-of|conflicts|depends-on|inspires|addresses)(?=$|[（(：:\s])/i);
+  const vocab = match ? match[1].toLowerCase() : null;
+  let note;
+  let qualifier = null;
+  if (vocab) {
+    let rest = text.slice(match[1].length);
+    const q = rest.match(/^\s*[（(]([^)）]*)[)）]/); // 词汇后的限定括注（部分）等，保留不臆断
+    if (q) {
+      qualifier = q[1].trim();
+      rest = rest.slice(q[0].length);
+    }
+    rest = rest.replace(/^\s*[：:]\s*/, ''); // 去掉分隔冒号
+    note = rest.trim();
+  } else {
+    note = text.trim();
+  }
+  return { vocab, vocabLabel: vocab ? MAP_MEANING_LABELS[vocab] ?? vocab : null, qualifier, note };
+}
+
+// 首页「当前关注／下一步」推导（R2/R3 默认焦点，R5 单一来源，R6 example 永久过滤）。
+// 无覆盖层时：当前关注＝active 方向中 order 最小者；下一步＝其生效 startRoute 首节点。
+// 不写死步骤指针：home.startHere 基线数据不被改写，其内容测试不变式继续生效（R0 不变式）。
+export function resolveHomeFocus(lib, overlay = currentGuidanceOverlay()) {
+  const eff = computeEffective(lib, overlay);
+  // B2 修复轮：方向与轨道一律读生效库 eff.lib（基线只作 computeEffective 的输入）——
+  // 覆盖层改过首步字段后，首屏「下一步」随生效值变化；example 条目在首页推导里永久过滤（R6 规则①）。
+  const active = activeDirections(eff.lib);
+  let direction = null;
+  let fromOverlay = false;
+  const hfUsable = Boolean(eff.homeFocus) && eff.homeFocus.example !== true;
+  if (hfUsable && typeof eff.homeFocus.routeId === 'string') {
+    direction = active.find((d) => d.id === eff.homeFocus.routeId) ?? null;
+    fromOverlay = Boolean(direction);
+  }
+  if (!direction) direction = active[0] ?? null;
+  const startSteps = trackEntries(eff.lib, direction?.id, 'start').filter((s) => s.example !== true);
+  let step = startSteps[0] ?? null;
+  let fallbackNote = null;
+  if (!step) {
+    // 理论上不可能（基线步骤不可删）；仍失败则回退基线 startHere 并显式提示，不静默（R3）。
+    const startHere = eff.lib.home?.startHere ?? lib.home?.startHere ?? null;
+    if (startHere) {
+      const resolved = resolveNodeTarget(eff.lib, startHere);
+      if (resolved) {
+        step = { id: null, kind: resolved.kind, resolved, passMode: null, purpose: null, __fallback: true };
+      }
+    }
+    fallbackNote = resolved2Note(step);
+  }
+  // note-only 焦点（只写附注、未切方向）同样给出来源行：noteVisible 驱动首屏 meta 渲染（B2）。
+  const focusNote = hfUsable ? eff.homeFocus?.note ?? null : null;
+  const noteVisible = hfUsable && Boolean(fromOverlay || focusNote);
+  return { direction, step, fromOverlay, focusNote, noteVisible, fallbackNote };
+}
+
+function resolved2Note(step) {
+  return step ? '起步路线暂无法从生效数据推导，已回退编辑基线首读；这不改变基线 startHere 数据。' : null;
+}
+
+// 首屏动线卡（B 包线框＋C 包生效）：当前关注／下一步／为什么选它／怎么读它／我的记录，加主行动入口。
+// 覆盖层"来源行"（R4）与"待确认提案"横幅（pending 仅会话内存、不落盘，R2）在此渲染；
+// example 条目不驱动推导（R6 规则①），但影响首屏展示的字段时按规则②带常驻示例横幅。
+function renderHomeFocusHero() {
+  const focus = resolveHomeFocus(renderBase);
+  const overlay = currentGuidanceOverlay();
+  const box = el('section', 'lib-home-focus');
+  box.appendChild(el('h2', 'lib-home-focus-title', '今日视角 · 做什么、读什么、怎么读'));
+
+  const direction = focus.direction;
+  // —— 做什么（当前关注）——
+  const focusLine = el('p', 'lib-focus-line');
+  focusLine.appendChild(el('strong', 'lib-focus-label', '当前关注'));
+  if (direction) focusLine.appendChild(link(buildHash('route', direction.id), direction.title));
+  else focusLine.appendChild(el('span', 'lib-unsafe-link', '方向尚未接入'));
+  box.appendChild(focusLine);
+  // 来源＋日期行（编辑建议：方向集合经用户授权；覆盖层调整另起一行，R4 纯文本 meta）。
+  box.appendChild(
+    el(
+      'p',
+      'lib-focus-prov',
+      `编辑建议 · 方向集合经用户 2026-09-21／09-22 授权；现状核查截止 ${direction?.asOf ?? '—'}。`,
+    ),
+  );
+  if (focus.noteVisible) {
+    const hf = overlay?.homeFocus ?? null;
+    const meta = hf ? adjustLabel({ origin: hf.origin, example: hf.example }) : '导学调整（本人确认）';
+    box.appendChild(el('p', 'lib-focus-prov', `${meta}${focus.focusNote ? ` · 附注：${focus.focusNote}` : ''}`));
+  }
+  // 当前关注经覆盖层示例条目改写的情况不会出现（example 在推导里永久过滤，R6 规则①）；
+  // 若下一步展示的「为什么选它」被示例调整，则首屏按规则②带常驻示例横幅。
+  const heroStepRefs = focus.step?.id
+    ? ['purpose', 'readWhen', 'check'].map((f) => `route-step:${focus.step.id}:${f}`)
+    : [];
+  const heroAdjustments = heroStepRefs.map((ref) => overlayEntry(overlay, ref)).filter(Boolean);
+  if (heroAdjustments.some((entry) => entry.example === true)) {
+    box.appendChild(el('p', 'lib-example-banner', EXAMPLE_BANNER_TEXT));
+  }
+  for (const entry of heroAdjustments) {
+    box.appendChild(el('p', 'lib-adjust-meta', adjustLabel(entry)));
+  }
+  // cross-harness 兴趣 ≠ 定稿题目（交付行为 1／长期约束：不承诺创新或发表）。
+  box.appendChild(
+    el('p', 'lib-focus-scope', '当前关注是起步的兴趣场景与阅读上下文，不是已经定稿的论文题目，也不预设任何机制或表示胜出。'),
+  );
+  if (focus.fallbackNote) box.appendChild(el('p', 'lib-notice-flat', focus.fallbackNote));
+
+  // —— 读什么（下一步，生效 startRoute 首节点推导）——
+  const step = focus.step;
+  let nextHref = null;
+  if (step && step.resolved) {
+    nextHref = step.__fallback
+      ? startTargetHref(renderLibrary.home?.startHere)
+      : stepHref(direction?.id, 'start', step) ?? step.resolved.href;
+    const nextLine = el('p', 'lib-focus-line');
+    nextLine.appendChild(el('strong', 'lib-focus-label', '下一步'));
+    nextLine.appendChild(link(nextHref ?? step.resolved.href ?? '#/home', step.resolved.title));
+    box.appendChild(nextLine);
+    if (step.purpose) {
+      const why = el('p', 'lib-focus-line');
+      why.appendChild(el('strong', 'lib-focus-label', '为什么选它'));
+      why.appendChild(document.createTextNode(step.purpose));
+      box.appendChild(why);
+    }
+    const howMode = step.passMode ? PASS_MODE_LABELS[step.passMode] ?? step.passMode : null;
+    const howIsPrimer = step.kind === 'article' || step.resolved.kind === 'article';
+    const how = el('p', 'lib-focus-line');
+    how.appendChild(el('strong', 'lib-focus-label', '怎么读它'));
+    how.appendChild(
+      document.createTextNode(
+        howIsPrimer
+          ? '先读这份站内问题导读（它本身就是起步用的问题地图）；'
+          : `${howMode ?? '按需'}；`,
+      ),
+    );
+    const mapLink = link('#/map', '打开领域地图');
+    how.appendChild(mapLink);
+    how.appendChild(document.createTextNode('看两侧认识与有据关联，再进原文。'));
+    box.appendChild(how);
+  }
+
+  // —— 我的记录：四态分明（不可读 / 无记录 / 只有非在读记录 / 有在读），不把"没有在读"误报成"没有记录" ——
+  const recLine = el('p', 'lib-focus-line');
+  recLine.appendChild(el('strong', 'lib-focus-label', '我的记录'));
+  const rec = v3RecordSummary();
+  if (!rec.readable) {
+    recLine.appendChild(
+      document.createTextNode(
+        rec.corrupt
+          ? '检测到本地记录数据损坏，已不加载（未做任何改动）——这里不显示任何进度；如需处理见"论文阅读"页的记录区。'
+          : '本浏览器存储不可用，当前读不到本地记录——这里不显示任何进度；页面其余内容照常。',
+      ),
+    );
+  } else if (!rec.hasAny) {
+    recLine.appendChild(document.createTextNode('尚无阅读记录——以下为编辑建议的起步路线，不是你的进度。'));
+  } else {
+    const parts = [];
+    if (rec.reading > 0) parts.push(`在读 ${rec.reading} 篇`);
+    if (rec.done > 0) parts.push(`已读 ${rec.done} 篇`);
+    if (rec.noted > 0) parts.push(`问题／笔记 ${rec.noted} 篇`);
+    if (rec.list > 0) parts.push(`待读清单 ${rec.list} 条`);
+    recLine.appendChild(
+      document.createTextNode(`${parts.join(' · ')}（均为本人手动标记，不是统计意义上的进度；不显示百分比或连续天数）。`),
+    );
+  }
+  box.appendChild(recLine);
+
+  // —— 主行动入口 ——
+  const actions = el('p', 'lib-focus-actions');
+  actions.appendChild(link('#/map', '打开地图', 'lib-btn'));
+  if (step && step.resolved) {
+    actions.appendChild(link(nextHref ?? step.resolved.href ?? '#/home', step.resolved.kind === 'article' ? '导读：分清问题' : '打开阅读卡', 'lib-btn'));
+  }
+  box.appendChild(actions);
+  // 待确认提案横幅（C 包，R2）：只在存在 pending（本会话粘贴、未确认）时出现；
+  // pending 不落盘——刷新/关闭即整案丢弃，横幅随会话消失（不存在「半写入」中间态）。
+  if (guidanceUi.pending.length > 0) {
+    const banner = el('p', 'lib-pending-banner');
+    banner.appendChild(
+      link('#/guidance', `有 ${guidanceUi.pending.length} 条待确认提案 → 预览（未确认前不会写入任何内容）`),
+    );
+    box.appendChild(banner);
+  }
+  return box;
+}
+
+// 次级入口一行（每日精选/经典/技术/方向/材料）：可达但不抢主动线。
+function renderHomeSecondaryRow() {
+  const line = el('p', 'lib-home-secondary');
+  line.appendChild(el('span', 'lib-focus-label', '其他入口'));
+  const entries = [
+    ['每日精选', '#/brief'],
+    ['经典书目', '#/foundations'],
+    ['技术学习', '#/learn'],
+    ['方向与路线', '#/directions'],
+    ['全部论文', '#/papers'],
+    // C 包：本机导学提案闭环的常驻入口（导学调整页；提案/预览/确认/撤销/备份都在这里）。
+    ['导学调整', '#/guidance'],
+  ];
+  const links = entries.map(([label, href]) => link(href, label));
+  links.forEach((a, i) => {
+    if (i > 0) line.appendChild(document.createTextNode(' · '));
+    line.appendChild(a);
+  });
+  return line;
+}
+
 function renderHome(container) {
   const home = renderLibrary.home;
   const page = el('div', 'lib-home');
@@ -1920,239 +2400,325 @@ function renderHome(container) {
     ),
   );
 
+  // DYNAMIC-GUIDANCE-009 / B 包：首屏"做什么、读什么、怎么读"连贯动线（R2 线框）。
+  // 生效值仅经 resolveHomeFocus→computeEffective 单入口；无覆盖层时＝基线推导，不写死步骤指针。
+  page.appendChild(renderHomeFocusHero());
+
+  // 次级入口一行：每日精选/经典/技术/方向/材料仍可达，但不占主动线（R2 §1、交付行为 1）。
+  page.appendChild(renderHomeSecondaryRow());
+
+  // PLAN-010 阶段 B：首页四区（阅读目标/综述总览/课题深化/技术入口）。旧五区内容不删：
+  // 精选与首读归入「阅读目标」，两条方向与四轴浓缩归入「课题深化」，技术路线归入「技术入口」，
+  // 经典书目归入「综述总览」的共同语言小节；未知 key（旧 fixture）走逐 key 回退，不丢内容。
+  const zoneCfg = (key, fallback) => home.zones.find((z) => z.key === key) ?? fallback;
   const grid = el('div', 'lib-home-grid');
   page.appendChild(grid);
 
-  // 每日精选区（第一位：唯一每天变化的内容）
-  const briefBody = el('div', 'lib-zone-body');
-  if (latest) {
-    briefBody.appendChild(el('p', 'lib-zone-flag', `最近一期 ${latest.date}`));
-    // 本期为空窗口（索引滞后等）时，如实保留本期并指向最近有内容的一期。
-    if (latest.items.length === 0) {
-      const lastNonEmpty = [...renderLibrary.briefs]
-        .sort((a, b) => String(b.date).localeCompare(String(a.date)))
-        .find((b) => b.items.length > 0);
-      if (lastNonEmpty) {
-        const hint = el('p', 'lib-muted', '本期为空窗口（arXiv 索引滞后），暂无条目；最近有内容的一期：');
-        hint.appendChild(link(buildHash('brief', lastNonEmpty.id), lastNonEmpty.date));
-        briefBody.appendChild(hint);
-      }
-    }
-    for (const item of latest.items.slice(0, 3)) {
-      const line = el('div', 'lib-zone-item');
-      const title = el('p', 'lib-zone-item-title');
-      const target = briefItemTarget(renderLibrary, item);
-      if (target?.kind === 'paper') {
-        const paper = getPaper(renderLibrary, target.paperId);
-        title.appendChild(paperLink(paper));
-      } else if (target?.kind === 'external') {
-        title.appendChild(externalLink(target.href, briefSourceLabel(item, target.href)));
+  const renderLegacyZone = (zone) => {
+    if (zone.key === 'brief') {
+      const briefBody = el('div', 'lib-zone-body');
+      if (latest) {
+        briefBody.appendChild(el('p', 'lib-zone-flag', `最近一期 ${latest.date}`));
+        if (latest.items.length === 0) {
+          const lastNonEmpty = [...renderLibrary.briefs]
+            .sort((a, b) => String(b.date).localeCompare(String(a.date)))
+            .find((b) => b.items.length > 0);
+          if (lastNonEmpty) {
+            const hint = el('p', 'lib-muted', '本期为空窗口（arXiv 索引滞后），暂无条目；最近有内容的一期：');
+            hint.appendChild(link(buildHash('brief', lastNonEmpty.id), lastNonEmpty.date));
+            briefBody.appendChild(hint);
+          }
+        }
+        for (const item of latest.items.slice(0, 3)) {
+          const line = el('div', 'lib-zone-item');
+          const title = el('p', 'lib-zone-item-title');
+          const target = briefItemTarget(renderLibrary, item);
+          if (target?.kind === 'paper') title.appendChild(paperLink(getPaper(renderLibrary, target.paperId)));
+          else if (target?.kind === 'external') title.appendChild(externalLink(target.href, briefSourceLabel(item, target.href)));
+          else title.appendChild(el('span', 'lib-unsafe-link', `${item.paperId ?? item.source ?? ''}（关联未接入）`));
+          line.appendChild(title);
+          line.appendChild(el('p', 'lib-zone-item-note', `${item.tier}：${item.reason}`));
+          briefBody.appendChild(line);
+        }
       } else {
-        title.appendChild(el('span', 'lib-unsafe-link', `${item.paperId ?? item.source ?? ''}（关联未接入）`));
+        briefBody.appendChild(emptyBox(EMPTY_NOTICES.briefs));
       }
-      line.appendChild(title);
-      line.appendChild(el('p', 'lib-zone-item-note', `${item.tier}：${item.reason}`));
-      briefBody.appendChild(line);
+      return briefBody;
     }
-  } else {
-    briefBody.appendChild(emptyBox(EMPTY_NOTICES.briefs));
-  }
-  grid.appendChild(
-    homeZone(
-      home.zones.find((z) => z.key === 'brief') ?? {
-        key: 'brief',
-        title: '每日精选',
-        purpose: '少量值得留意的新线索，说明为什么挑它。',
-        howToUse: '看整理日期与论文日期；这不是当天全量检索。',
-        entryLabel: '看最近一期',
-        entryHash: '#/brief',
-      },
-      briefBody,
-    ),
-  );
+    if (zone.key === 'papers') {
+      const paperBody = el('div', 'lib-zone-body');
+      const startTarget =
+        home.startHere != null
+          ? home.startHere
+          : home.startHerePaperId != null
+            ? { kind: 'paper', paperId: home.startHerePaperId }
+            : null;
+      const startResolved = startTarget ? resolveNodeTarget(renderLibrary, startTarget) : null;
+      const startHref = startTarget ? startTargetHref(startTarget) : null;
+      if (startResolved && startHref) {
+        const item = el('div', 'lib-zone-item');
+        item.appendChild(el('p', 'lib-zone-flag', startResolved.kind === 'article' ? '建议从这里开始' : '建议先读'));
+        const title = el('p', 'lib-zone-item-title');
+        title.appendChild(link(startHref, startResolved.title));
+        item.appendChild(title);
+        if (startResolved.lead) item.appendChild(el('p', 'lib-zone-item-note', startResolved.lead));
+        paperBody.appendChild(item);
+      }
+      return paperBody;
+    }
+    if (zone.key === 'directions') {
+      const dirBody = el('div', 'lib-zone-body');
+      for (const direction of activeDirections(renderLibrary)) {
+        const item = el('div', 'lib-zone-item');
+        const title = el('p', 'lib-zone-item-title');
+        title.appendChild(link(buildHash('route', direction.id), direction.title));
+        item.appendChild(title);
+        if (direction.summary) item.appendChild(el('p', 'lib-zone-item-note', direction.summary));
+        dirBody.appendChild(item);
+      }
+      return dirBody;
+    }
+    if (zone.key === 'learn') {
+      const learnBody = el('div', 'lib-zone-body');
+      for (const route of featuredTechnicalRoutes(renderLibrary)) {
+        const item = el('div', 'lib-zone-item');
+        const title = el('p', 'lib-zone-item-title');
+        title.appendChild(link(buildHash('learn', route.id), route.title));
+        item.appendChild(title);
+        item.appendChild(el('p', 'lib-zone-item-note', `共 ${route.units?.length ?? 0} 个单元。${route.summary ?? route.capability}`));
+        learnBody.appendChild(item);
+      }
+      return learnBody;
+    }
+    const foundBody = el('div', 'lib-zone-body');
+    for (const group of foundationGroups(renderLibrary)) {
+      const item = el('div', 'lib-zone-item');
+      const title = el('p', 'lib-zone-item-title');
+      title.appendChild(link('#/foundations', group.title));
+      item.appendChild(title);
+      item.appendChild(el('p', 'lib-zone-item-note', `${group.papers.length} 篇：${group.papers.map((p) => p.displayTitle || p.title).join('、')}。`));
+      foundBody.appendChild(item);
+    }
+    return foundBody;
+  };
 
-  // 论文阅读区（第二位：先看在读直达，其次才是编辑建议）
-  const paperBody = el('div', 'lib-zone-body');
-  // REWORK-007 §2：本人手动标记的"在读"直达行——只引用真实标记，不做任何进度统计。
-  if (v3Available()) {
-    const readingPapers = Object.entries(v3Runtime.state.papers ?? {})
-      .filter(([, rec]) => rec?.status === 'reading')
-      .map(([id]) => getPaper(renderLibrary, id))
-      .filter(Boolean);
-    if (readingPapers.length > 0) {
-      const line = el('p', 'lib-first-line');
-      line.appendChild(el('strong', 'lib-step-label', '我在读（本人标记）：'));
-      readingPapers.forEach((p, i) => {
-        if (i > 0) line.appendChild(document.createTextNode('；'));
-        line.appendChild(paperLink(p));
-      });
-      paperBody.appendChild(line);
-    }
-  }
-  // SCAFFOLD-008：带类型首读（03 §4）。typed startHere 优先；旧 startHerePaperId 只读适配。
-  const startTarget =
-    home.startHere != null
-      ? home.startHere
-      : home.startHerePaperId != null
-        ? { kind: 'paper', paperId: home.startHerePaperId }
-        : null;
-  const startResolved = startTarget ? resolveNodeTarget(renderLibrary, startTarget) : null;
-  const startHref = startTarget ? startTargetHref(startTarget) : null;
-  if (startResolved && startHref) {
-    const item = el('div', 'lib-zone-item');
-    // 01 D：材料首读的文案是「建议从这里开始」，论文首读沿用「建议先读」。
-    item.appendChild(el('p', 'lib-zone-flag', startResolved.kind === 'article' ? '建议从这里开始' : '建议先读'));
-    const title = el('p', 'lib-zone-item-title');
-    title.appendChild(link(startHref, startResolved.title));
-    item.appendChild(title);
-    if (startResolved.kind === 'paper') {
-      const startPaper = getPaper(renderLibrary, startTarget.paperId);
-      if (startPaper) item.appendChild(badgeLine(startPaper));
+  for (const zone of home.zones) {
+    let body;
+    if (zone.key === 'goal') {
+      body = el('div', 'lib-zone-body');
+      // 建议从这里开始（typed 首读）
+      const startTarget =
+        home.startHere != null
+          ? home.startHere
+          : home.startHerePaperId != null
+            ? { kind: 'paper', paperId: home.startHerePaperId }
+            : null;
+      const startResolved = startTarget ? resolveNodeTarget(renderLibrary, startTarget) : null;
+      const startHref = startTarget ? startTargetHref(startTarget) : null;
+      if (startResolved && startHref) {
+        const item = el('div', 'lib-zone-item');
+        item.appendChild(el('p', 'lib-zone-flag', startResolved.kind === 'article' ? '建议从这里开始' : '建议先读'));
+        const title = el('p', 'lib-zone-item-title');
+        title.appendChild(link(startHref, startResolved.title));
+        item.appendChild(title);
+        if (startResolved.kind === 'paper') {
+          const startPaper = getPaper(renderLibrary, startTarget.paperId);
+          if (startPaper) item.appendChild(badgeLine(startPaper));
+        } else {
+          const meta = [startResolved.formatLabel, startResolved.depthLabel].filter(Boolean).join(' · ');
+          if (meta) item.appendChild(el('p', 'lib-depth-note', meta));
+        }
+        if (startResolved.lead) item.appendChild(el('p', 'lib-zone-item-note', startResolved.lead));
+        const actions = el('p', 'lib-first-line');
+        actions.appendChild(link(startHref, startResolved.kind === 'article' ? '打开导读' : '打开阅读卡'));
+        item.appendChild(actions);
+        body.appendChild(item);
+      } else if (renderLibrary.papers.length === 0) {
+        body.appendChild(emptyBox(EMPTY_NOTICES.papers));
+      }
+      // 基础导读（站内 primer，除首读外）：回答「为什么/怎么读」的三个层次
+      const primers = (renderLibrary.materials ?? []).filter(
+        (m) => m.format === 'primer' && m.id !== home.startHere?.materialId && m.coverage?.mode !== 'identity',
+      );
+      if (primers.length > 0) {
+        const sub = el('div', 'lib-zone-sub');
+        sub.appendChild(el('p', 'lib-zone-flag', '站内基础导读（编辑说明，随时可插读）'));
+        for (const material of primers) {
+          const line = el('p', 'lib-first-line');
+          line.appendChild(link(buildHash('material', material.id), material.title));
+          if (material.lead) line.appendChild(el('span', 'lib-res-meta', ` —— ${material.lead}`));
+          sub.appendChild(line);
+        }
+        body.appendChild(sub);
+      }
+      // 本人手动标记的"在读"直达行——只引用真实标记，不做任何进度统计。
+      if (v3Available()) {
+        const readingPapers = Object.entries(v3Runtime.state.papers ?? {})
+          .filter(([, rec]) => rec?.status === 'reading')
+          .map(([id]) => getPaper(renderLibrary, id))
+          .filter(Boolean);
+        if (readingPapers.length > 0) {
+          const line = el('p', 'lib-first-line');
+          line.appendChild(el('strong', 'lib-step-label', '我在读（本人标记）：'));
+          readingPapers.forEach((p, i) => {
+            if (i > 0) line.appendChild(document.createTextNode('；'));
+            line.appendChild(paperLink(p));
+          });
+          body.appendChild(line);
+        }
+      }
+      // 每日精选（原区一内容归入此处）：感知前沿，不是今日阅读作业。
+      if (latest) {
+        const sub = el('div', 'lib-zone-sub');
+        sub.appendChild(el('p', 'lib-zone-flag', `感知前沿 · 最近一期 ${latest.date}（不是今天的阅读作业）`));
+        if (latest.items.length === 0) {
+          const lastNonEmpty = [...renderLibrary.briefs]
+            .sort((a, b) => String(b.date).localeCompare(String(a.date)))
+            .find((b) => b.items.length > 0);
+          if (lastNonEmpty) {
+            const hint = el('p', 'lib-muted', '本期为空窗口（arXiv 索引滞后），暂无条目；最近有内容的一期：');
+            hint.appendChild(link(buildHash('brief', lastNonEmpty.id), lastNonEmpty.date));
+            sub.appendChild(hint);
+          } else {
+            sub.appendChild(el('p', 'lib-muted', '本期为空窗口（arXiv 索引滞后），暂无条目。'));
+          }
+        }
+        for (const item of latest.items.slice(0, 3)) {
+          const line = el('div', 'lib-zone-item');
+          const title = el('p', 'lib-zone-item-title');
+          const target = briefItemTarget(renderLibrary, item);
+          if (target?.kind === 'paper') title.appendChild(paperLink(getPaper(renderLibrary, target.paperId)));
+          else if (target?.kind === 'external') title.appendChild(externalLink(target.href, briefSourceLabel(item, target.href)));
+          else title.appendChild(el('span', 'lib-unsafe-link', `${item.paperId ?? item.source ?? ''}（关联未接入）`));
+          line.appendChild(title);
+          line.appendChild(el('p', 'lib-zone-item-note', `${item.tier}：${item.reason}`));
+          sub.appendChild(line);
+        }
+        body.appendChild(sub);
+      } else {
+        body.appendChild(emptyBox(EMPTY_NOTICES.briefs));
+      }
+    } else if (zone.key === 'survey') {
+      body = el('div', 'lib-zone-body');
+      // PLAN-010 过渡态（主会话 REV 待定稿）：当前仅记忆/通信两个专题分支综述，
+      // 广域「AI 发展到 Agent」脉络图待来源包补入后在本区扩展，不以两个专题综述充当总览。
+      // 广域脉络图三层介绍 + 直接入口（REV001）；数据未接入时如实过渡，不放假数据。
+      const land = renderLibrary.landscape;
+      const landLayers = land && Array.isArray(land.nodes) && land.nodes.length > 0 ? (land.layers ?? []) : [];
+      if (landLayers.length > 0) {
+        const sub = el('div', 'lib-zone-sub');
+        sub.appendChild(el('p', 'lib-zone-flag', '广域脉络图 · 三层结构（点击节点看详解）'));
+        for (const layer of landLayers) {
+          const line = el('p', 'lib-first-line');
+          line.appendChild(el('strong', 'lib-step-label', `${layer.title}：`));
+          line.appendChild(document.createTextNode(`${layer.summary}（${land.nodes.filter((n) => n.layer === layer.id).length} 个节点）`));
+          sub.appendChild(line);
+        }
+        const entry = el('p', 'lib-first-line');
+        entry.appendChild(link('#/map', '打开广域脉络图（图 + 层级文本 + 节点详解）', 'lib-btn'));
+        sub.appendChild(entry);
+        body.appendChild(sub);
+      } else {
+        body.appendChild(
+          el('p', 'lib-notice-flat', '广域认知脉络图建设中：等待来源包核查后补入三层脉络（AI 背景 → Agent 全景 → 专题分支）与学习路径；当前先以两个专题分支综述打底。'),
+        );
+      }
+      const surveys = renderLibrary.papers.filter((p) => p.surveyTree && Array.isArray(p.surveyTree.roots) && p.surveyTree.roots.length > 0);
+      if (surveys.length === 0) body.appendChild(emptyBox(EMPTY_NOTICES.papers));
+      for (const survey of surveys) {
+        const item = el('div', 'lib-zone-item');
+        item.appendChild(el('p', 'lib-zone-flag', `专题分支综述 · 导学树在卡内`));
+        const title = el('p', 'lib-zone-item-title');
+        title.appendChild(paperLink(survey));
+        item.appendChild(title);
+        if (survey.lead) item.appendChild(el('p', 'lib-zone-item-note', survey.lead));
+        item.appendChild(el('p', 'lib-zone-item-note', '进卡后按章节来源逐层展开知识层级树：每层有解释与来源标注，站内回链是编辑排定的阅读顺序，不是论文引用。'));
+        body.appendChild(item);
+      }
+      // 经典书目（原区五内容归入此处）：跨方向共同语言。
+      const fGroups = foundationGroups(renderLibrary);
+      if (fGroups.length > 0) {
+        const sub = el('div', 'lib-zone-sub');
+        sub.appendChild(el('p', 'lib-zone-flag', '共同语言 · 经典书目（不绑定方向的基础经典）'));
+        for (const group of fGroups) {
+          const line = el('p', 'lib-first-line');
+          line.appendChild(link('#/foundations', group.title));
+          line.appendChild(el('span', 'lib-res-meta', ` —— ${group.note}（${group.papers.length} 篇）`));
+          sub.appendChild(line);
+        }
+        body.appendChild(sub);
+      }
+    } else if (zone.key === 'topic') {
+      body = el('div', 'lib-zone-body');
+      const directions = activeDirections(renderLibrary);
+      if (directions.length === 0) body.appendChild(emptyBox(EMPTY_NOTICES.directions));
+      for (const direction of directions) {
+        const item = el('div', 'lib-zone-item');
+        const title = el('p', 'lib-zone-item-title');
+        title.appendChild(link(buildHash('route', direction.id), direction.title));
+        item.appendChild(title);
+        if (direction.summary) item.appendChild(el('p', 'lib-zone-item-note', direction.summary));
+        body.appendChild(item);
+      }
+      // 四轴浓缩视图（主方向有 axisAnalysis 时）：一轴一行，指向课题页。
+      const main = directions.find((d) => Array.isArray(d.axisAnalysis?.axes));
+      if (main) {
+        const sub = el('div', 'lib-zone-sub');
+        sub.appendChild(el('p', 'lib-zone-flag', '四轴编辑分析框架（用户讨论口径，非综述公认分类）'));
+        for (const axis of main.axisAnalysis.axes) {
+          const line = el('p', 'lib-first-line');
+          line.appendChild(el('strong', 'lib-step-label', `${axis.title}：`));
+          line.appendChild(document.createTextNode(axis.explain));
+          sub.appendChild(line);
+        }
+        const more = el('p', 'lib-first-line');
+        more.appendChild(link(buildHash('route', main.id), '进课题页看四轴实例、机制与表示对照、问题演化与未定候选'));
+        sub.appendChild(more);
+        body.appendChild(sub);
+      }
+    } else if (zone.key === 'tech') {
+      body = el('div', 'lib-zone-body');
+      const featured = featuredTechnicalRoutes(renderLibrary);
+      if (featured.length > 0) {
+        for (const route of featured) {
+          const item = el('div', 'lib-zone-item');
+          const title = el('p', 'lib-zone-item-title');
+          title.appendChild(link(buildHash('learn', route.id), route.title));
+          item.appendChild(title);
+          const note = el('p', 'lib-zone-item-note');
+          note.appendChild(el('strong', null, '与研究能力的关系：'));
+          note.appendChild(document.createTextNode(route.researchLink ?? route.capability));
+          item.appendChild(note);
+          item.appendChild(el('p', 'lib-res-meta', `共 ${route.units?.length ?? 0} 个单元。${route.summary ?? ''}`));
+          body.appendChild(item);
+        }
+        const others = renderLibrary.technicalRoutes.filter((r) => r.kind !== 'featured');
+        if (others.length > 0) {
+          const details = el('details', 'lib-quick-group');
+          details.appendChild(el('summary', 'lib-quick-title', '其他主干（当前不必先学）'));
+          const line = el('p', 'lib-zone-adv');
+          others.forEach((route, i) => {
+            if (i > 0) line.appendChild(document.createTextNode('；'));
+            line.appendChild(link(buildHash('learn', route.id), route.title));
+          });
+          details.appendChild(line);
+          body.appendChild(details);
+        }
+      } else {
+        for (const route of coreTechnicalRoutes(renderLibrary)) {
+          const item = el('div', 'lib-zone-item');
+          const title = el('p', 'lib-zone-item-title');
+          title.appendChild(link(buildHash('learn', route.id), route.title));
+          item.appendChild(title);
+          item.appendChild(el('p', 'lib-zone-item-note', `共 ${route.units?.length ?? 0} 个单元。${route.prerequisites ?? ''}`));
+          body.appendChild(item);
+        }
+      }
     } else {
-      const meta = [startResolved.formatLabel, startResolved.depthLabel].filter(Boolean).join(' · ');
-      if (meta) item.appendChild(el('p', 'lib-depth-note', meta));
+      body = renderLegacyZone(zone);
     }
-    if (startResolved.lead) item.appendChild(el('p', 'lib-zone-item-note', startResolved.lead));
-    if (startResolved.availability === 'pending') {
-      item.appendChild(el('p', 'lib-notice-flat', `首读节点来源待核：${startResolved.pendingReason ?? '原因待补'}。`));
-    }
-    const actions = el('p', 'lib-first-line');
-    actions.appendChild(link(startHref, startResolved.kind === 'article' ? '打开导读' : '打开阅读卡'));
-    item.appendChild(actions);
-    paperBody.appendChild(item);
-  } else if (renderLibrary.papers.length === 0) {
-    paperBody.appendChild(emptyBox(EMPTY_NOTICES.papers));
+    grid.appendChild(homeZone(zone, body));
   }
-  grid.appendChild(
-    homeZone(
-      home.zones.find((z) => z.key === 'papers') ?? {
-        key: 'papers',
-        title: '论文阅读',
-        purpose: '单篇论文读到能讲清楚它解决什么、怎么做、证据支持到哪里。',
-        howToUse: '从建议先读的一篇开始，按“读到什么程度”自查。',
-        entryLabel: '打开全部论文',
-        entryHash: '#/papers',
-      },
-      paperBody,
-    ),
-  );
-
-  // 方向与路线区（第三位）：默认入口只列 active（PF-01 补）。
-  const directions = activeDirections(renderLibrary);
-  const dirBody = el('div', 'lib-zone-body');
-  if (directions.length === 0) dirBody.appendChild(emptyBox(EMPTY_NOTICES.directions));
-  for (const direction of directions) {
-    const item = el('div', 'lib-zone-item');
-    const title = el('p', 'lib-zone-item-title');
-    title.appendChild(link(buildHash('route', direction.id), direction.title));
-    item.appendChild(title);
-    if (direction.summary) item.appendChild(el('p', 'lib-zone-item-note', direction.summary));
-    dirBody.appendChild(item);
-  }
-  grid.appendChild(
-    homeZone(
-      home.zones.find((z) => z.key === 'directions') ?? {
-        key: 'directions',
-        title: '方向与路线',
-        purpose: '把“可以研究什么”变成有边界、有依据的候选，并给一条按阶段推进的阅读路线。',
-        howToUse: '先看方向说明与当前研究情况，再决定要不要按路线读。',
-        entryLabel: '查看方向',
-        entryHash: '#/directions',
-      },
-      dirBody,
-    ),
-  );
-
-  // 技术学习区（第四位）：有 featured 时按「默认三条 + 其他主干折叠」，否则沿用旧 core/advanced 列表。
-  const learnBody = el('div', 'lib-zone-body');
-  const featured = featuredTechnicalRoutes(renderLibrary);
-  if (featured.length > 0) {
-    for (const route of featured) {
-      const item = el('div', 'lib-zone-item');
-      const title = el('p', 'lib-zone-item-title');
-      title.appendChild(link(buildHash('learn', route.id), route.title));
-      item.appendChild(title);
-      const count = route.units?.length ?? 0;
-      item.appendChild(el('p', 'lib-zone-item-note', `共 ${count} 个单元。${route.summary ?? route.capability}`));
-      learnBody.appendChild(item);
-    }
-    const others = renderLibrary.technicalRoutes.filter((r) => r.kind !== 'featured');
-    if (others.length > 0) {
-      const details = el('details', 'lib-quick-group');
-      details.appendChild(el('summary', 'lib-quick-title', '其他主干（当前不必先学）'));
-      const line = el('p', 'lib-zone-adv');
-      others.forEach((route, i) => {
-        if (i > 0) line.appendChild(document.createTextNode('；'));
-        line.appendChild(link(buildHash('learn', route.id), route.title));
-      });
-      details.appendChild(line);
-      learnBody.appendChild(details);
-    }
-  } else {
-    const core = coreTechnicalRoutes(renderLibrary);
-    if (core.length === 0) learnBody.appendChild(emptyBox(EMPTY_NOTICES.learnCore));
-    for (const route of core) {
-      const item = el('div', 'lib-zone-item');
-      const title = el('p', 'lib-zone-item-title');
-      title.appendChild(link(buildHash('learn', route.id), route.title));
-      item.appendChild(title);
-      const count = route.units?.length ?? 0;
-      const state = routeStartable(renderLibrary, route) ? '已有可开始单元' : '可开始单元待补核';
-      item.appendChild(el('p', 'lib-zone-item-note', `共 ${count} 个单元，${state}。${route.prerequisites ?? ''}`));
-      learnBody.appendChild(item);
-    }
-    const advanced = advancedTechnicalRoutes(renderLibrary);
-    if (advanced.length > 0) {
-      const line = el('p', 'lib-zone-adv');
-      line.appendChild(el('span', 'lib-step-label', '按需深入：'));
-      advanced.forEach((route, i) => {
-        if (i > 0) line.appendChild(document.createTextNode('；'));
-        line.appendChild(link(buildHash('learn', route.id), route.title));
-      });
-      learnBody.appendChild(line);
-    }
-  }
-  grid.appendChild(
-    homeZone(
-      home.zones.find((z) => z.key === 'learn') ?? {
-        key: 'learn',
-        title: '技术学习',
-        purpose: '建立做 Agent 研究要用的工程与评价能力。',
-        howToUse: '不必先选题，按主干顺序学，已掌握的部分用单元自查跳过。',
-        entryLabel: '进入技术学习',
-        entryHash: '#/learn',
-      },
-      learnBody,
-    ),
-  );
-
-  // 经典书目区（原"区五"；每日精选区已按 REWORK-007 §2 移至首页第一位）
-  const foundBody = el('div', 'lib-zone-body');
-  const fGroups = foundationGroups(renderLibrary);
-  if (fGroups.length === 0) {
-    foundBody.appendChild(emptyBox('经典书目尚未接入：按主题分组的基础经典将在核查身份后显示。'));
-  }
-  for (const group of fGroups) {
-    const item = el('div', 'lib-zone-item');
-    const title = el('p', 'lib-zone-item-title');
-    title.appendChild(link('#/foundations', group.title));
-    item.appendChild(title);
-    item.appendChild(el('p', 'lib-zone-item-note', `${group.papers.length} 篇：${group.papers.map((p) => p.displayTitle || p.title).join('、')}。`));
-    foundBody.appendChild(item);
-  }
-  grid.appendChild(
-    homeZone(
-      home.zones.find((z) => z.key === 'foundations') ?? {
-        key: 'foundations',
-        title: '经典书目',
-        purpose: '做 Agent 研究的共同语言：不绑定方向的基础经典。',
-        howToUse: '先读“架构与预训练”，再按需要进入推理与智能体范式。',
-        entryLabel: '打开经典书目',
-        entryHash: '#/foundations',
-      },
-      foundBody,
-    ),
-  );
 
   if (Array.isArray(home.firstUse) && home.firstUse.length > 0) {
     const first = el('section', 'lib-firstuse');
@@ -2167,6 +2733,926 @@ function renderHome(container) {
     first.appendChild(ol);
     page.appendChild(first);
   }
+}
+
+// ---------- DYNAMIC-GUIDANCE-009 / B 包：领域认识 · 小型文字地图（#/map） ----------
+// 只读展示基线 LIBRARY.map（经 computeEffective 单入口，C 包覆盖层接入后自动生效）；
+// 两侧（problem／method）为文字节点，连线是编辑排定的概念关联（语义＋来源，PF-07：非论文引用）。
+// 动态文本一律 textContent／createTextNode；站内 ref 解析不了降级为"待查"文字，不产生假链接。
+function mapScrollButton(label, targetId) {
+  const btn = el('button', 'lib-map-jump', label);
+  btn.type = 'button';
+  btn.addEventListener('click', () => {
+    const target = document.getElementById(targetId);
+    if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+  return btn;
+}
+
+// 渲染一个地图节点卡片（label／summary／refs 站内链接／来源 meta 行）。
+function renderMapNode(lib, node) {
+  const card = el('article', `lib-map-node lib-map-node-${node.side}`);
+  card.id = `lib-map-node-${node.id}`;
+  card.appendChild(el('h3', 'lib-map-node-label', node.label ?? node.id));
+  if (node.summary) card.appendChild(el('p', 'lib-map-node-summary', node.summary));
+  const refs = Array.isArray(node.refs) ? node.refs : [];
+  const refLine = el('p', 'lib-map-refs');
+  refLine.appendChild(el('span', 'lib-map-inline-label', '可走到的内容：'));
+  if (refs.length === 0) {
+    refLine.appendChild(el('span', 'lib-muted', '（无站内条目，作为待查问题呈现）'));
+  } else {
+    refs.forEach((id, i) => {
+      if (i > 0) refLine.appendChild(document.createTextNode('、'));
+      const resolved = resolveMapRef(lib, id);
+      if (resolved?.href) refLine.appendChild(link(resolved.href, resolved.label, 'lib-map-ref'));
+      else refLine.appendChild(el('span', 'lib-map-unresolved', `${id}（待查：站内未解析）`));
+    });
+  }
+  card.appendChild(refLine);
+  const src = node.source ?? {};
+  card.appendChild(
+    el(
+      'p',
+      'lib-map-source',
+      `来源：${MAP_ORIGIN_LABELS[src.originType] ?? src.originType ?? '未标注'}${src.asOf ? ` · ${src.asOf}` : ''}${src.note ? ` —— ${readerSourceNote(src.note)}` : ''}`,
+    ),
+  );
+  // C 包（R4）：该节点被覆盖层新增/调整时，追加纯文本 meta 行；示例条目带示例字样。
+  const meta = adjustMetaFor(currentGuidanceOverlay(), 'map-node', node.id, ['label', 'summary', 'refs']);
+  if (meta) card.appendChild(el('p', 'lib-adjust-meta', meta));
+  return card;
+}
+
+// 渲染一条关系：语义词汇＋注记、两端可定位、evidence 站内链接、来源 meta 行。
+function renderMapEdge(lib, edge, nodeById) {
+  const row = el('div', 'lib-map-edge');
+  const { vocab, vocabLabel, note, qualifier } = parseMapMeaning(edge.meaning);
+  const head = el('p', 'lib-map-edge-head');
+  head.appendChild(el('span', 'lib-map-edge-word', `${vocabLabel ?? vocab ?? '关联'}${qualifier ? `（${qualifier}）` : ''}`));
+  head.appendChild(document.createTextNode(note ? `：${note}` : ''));
+  row.appendChild(head);
+  const ends = el('p', 'lib-map-edge-ends');
+  const fromNode = nodeById.get(edge.from);
+  const toNode = nodeById.get(edge.to);
+  if (!fromNode || !toNode) {
+    // 端点解析不到 ⇒ 降级为待查文字，不画线、不暗示连接（R1 渲染层校验）。
+    ends.appendChild(el('span', 'lib-map-unresolved', `待查：关系端点未解析（${edge.from ?? '?'} → ${edge.to ?? '?'}）`));
+  } else {
+    // 两端标签由各自 node.side 派生（不假设 from=方法、to=问题；depends-on 可两端同侧）。
+    ends.appendChild(mapScrollButton(`${mapSideLabel(fromNode)}：${fromNode.label ?? edge.from}`, `lib-map-node-${edge.from}`));
+    ends.appendChild(el('span', 'lib-map-arrow', ` ${vocab ?? 'rel'} → `));
+    ends.appendChild(mapScrollButton(`${mapSideLabel(toNode)}：${toNode.label ?? edge.to}`, `lib-map-node-${edge.to}`));
+  }
+  row.appendChild(ends);
+  const evIds = Array.isArray(edge.evidence) ? edge.evidence : [];
+  const evLine = el('p', 'lib-map-evidence');
+  evLine.appendChild(el('span', 'lib-map-inline-label', '证据（站内已核条目）：'));
+  if (evIds.length === 0) {
+    evLine.appendChild(el('span', 'lib-map-unresolved', '（无站内证据，降级为待查问题）'));
+  } else {
+    evIds.forEach((id, i) => {
+      if (i > 0) evLine.appendChild(document.createTextNode('、'));
+      const resolved = resolveMapRef(lib, id);
+      if (resolved?.href) evLine.appendChild(link(resolved.href, resolved.label, 'lib-map-ref'));
+      else evLine.appendChild(el('span', 'lib-map-unresolved', `${id}（待查：证据未解析）`));
+    });
+  }
+  row.appendChild(evLine);
+  const src = edge.source ?? {};
+  row.appendChild(
+    el(
+      'p',
+      'lib-map-source',
+      `来源：${MAP_ORIGIN_LABELS[src.originType] ?? src.originType ?? '未标注'}${src.asOf ? ` · ${src.asOf}` : ''}${src.note ? ` —— ${readerSourceNote(src.note)}` : ''}`,
+    ),
+  );
+  const meta = adjustMetaFor(currentGuidanceOverlay(), 'map-edge', edge.id, ['meaning', 'evidence']);
+  if (meta) row.appendChild(el('p', 'lib-adjust-meta', meta));
+  return row;
+}
+
+// ---------- PLAN REV001：广域认知脉络图（LIBRARY.landscape；主体在 #/map） ----------
+// 图文同数据：SVG 与层级文本/详解都由同一份 nodes/edges/paths 生成；无第二份数据。
+// 桌面 SVG 清楚不挤（分层三列、纵向展开），点击与键盘（Enter/Space）选节点显示详解；
+// 窄屏隐藏 SVG、层级文本优先（CSS 断点）。academic 边显示审计来源；reading 边只显示编辑理由。
+const LAND_NS = 'http://www.w3.org/2000/svg';
+function svgEl(tag, attrs = {}) {
+  const node = document.createElementNS
+    ? document.createElementNS(LAND_NS, tag)
+    : el(tag);
+  for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, String(value));
+  return node;
+}
+
+// 分层三列布局：列＝层（数组序），行＝层内序号；位置由数据推导，不在数据里手写坐标。
+function computeLandscapeLayout(land) {
+  const layers = land.layers ?? [];
+  const byLayer = new Map(layers.map((l) => [l.id, []]));
+  for (const node of land.nodes ?? []) {
+    if (!byLayer.has(node.layer)) byLayer.set(node.layer, []);
+    byLayer.get(node.layer).push(node);
+  }
+  const COL_W = 250;
+  const ROW_H = 78;
+  const pos = new Map();
+  layers.forEach((layer, col) => {
+    const list = byLayer.get(layer.id) ?? [];
+    list.forEach((node, row) => {
+      pos.set(node.id, { x: col * COL_W + 96, y: row * ROW_H + 56 });
+    });
+  });
+  const width = Math.max(1, layers.length) * COL_W + 40;
+  const maxRows = Math.max(1, ...[...byLayer.values()].map((l) => l.length));
+  const height = maxRows * ROW_H + 40;
+  return { pos, width, height };
+}
+
+function landscapeNodeLabel(node) {
+  const title = node.title ?? '';
+  return title.length > 11 ? `${title.slice(0, 11)}…` : title;
+}
+
+// 节点详解：guide（连贯讲解）优先；六字段速览退居折叠（有讲解时），无讲解节点字段保持直出。
+// 边分两类显示：学术关系带来源文献名（内部审计编号只在数据字段、不上屏）；建议阅读顺序标注为编辑安排。
+function renderLandscapeDetail(land, node, nodeById) {
+  const box = el('section', 'lib-land-detail');
+  box.appendChild(el('h4', 'lib-land-detail-title', node.title ?? ''));
+  box.appendChild(el('p', 'lib-res-meta', `${node.when ?? ''} · ${(land.layers.find((l) => l.id === node.layer) ?? {}).title ?? node.layer}`));
+  const fields = [
+    ['问题', node.problem],
+    ['思想', node.idea],
+    ['例子', node.example],
+    ['能力变化', node.capability],
+    ['局限', node.limitation],
+    ['来源', node.source ? `${node.source.note}（${node.source.asOf}）` : null],
+  ];
+  const buildFields = () => {
+    const dl = el('dl', 'lib-land-fields');
+    for (const [label, value] of fields) {
+      if (!value) continue;
+      dl.appendChild(el('dt', null, label));
+      dl.appendChild(el('dd', null, value));
+    }
+    return dl;
+  };
+  if (node.guide && typeof node.guide === 'object') {
+    // PLAN-011 B3：讲解优先，原六字段作速览折叠，避免双重全量展开。
+    const guideBox = el('div', 'lib-land-guide');
+    for (const part of ['motivation', 'mechanism', 'example', 'confusion', 'links']) {
+      const text = node.guide[part];
+      if (!text) continue;
+      guideBox.appendChild(el('p', 'lib-land-guide-part', text));
+    }
+    box.appendChild(guideBox);
+    // 审查修复（PLAN-011 修复轮）：guide 下保留一句常显来源＋证据级/关键身份，完整来源仍在折叠速览内。
+    if (node.sourceBrief) box.appendChild(el('p', 'lib-land-source-brief', node.sourceBrief));
+    const fieldsWrap = el('details', 'lib-quick-group lib-land-fields-wrap');
+    const summary = el('summary', null, '字段速览（问题/思想/例子/能力变化/局限/来源）');
+    fieldsWrap.appendChild(summary);
+    fieldsWrap.appendChild(buildFields());
+    box.appendChild(fieldsWrap);
+  } else {
+    box.appendChild(buildFields());
+  }
+  const touching = (land.edges ?? []).filter((e) => e.from === node.id || e.to === node.id);
+  if (touching.length > 0) {
+    box.appendChild(el('p', 'lib-land-detail-sub', '前后关系'));
+    const ul = el('ul', 'lib-list');
+    for (const edge of touching) {
+      const otherId = edge.from === node.id ? edge.to : edge.from;
+      const other = nodeById.get(otherId);
+      const li = el('li');
+      const line = el('p', 'lib-step-line');
+      line.appendChild(el('strong', null, other ? other.title : otherId));
+      line.appendChild(document.createTextNode(
+        edge.kind === 'academic'
+          ? ` —— 学术关系：${edge.note ?? ''}（来源：${edge.source?.note ?? ''} ${edge.source?.asOf ?? ''}）`
+          : ` —— 建议的阅读顺序（编辑安排）：${edge.note ?? ''}`,
+      ));
+      li.appendChild(line);
+      ul.appendChild(li);
+    }
+    box.appendChild(ul);
+  }
+  return box;
+}
+
+function renderLandscape(land) {
+  const box = el('section', 'lib-land');
+  box.appendChild(el('p', 'lib-map-note', land.note ?? ''));
+  if (land.asOf) box.appendChild(el('p', 'lib-asof', `脉络图核查截止：${land.asOf}；节点内容以各节点来源为准。`));
+
+  const nodeById = new Map((land.nodes ?? []).map((n) => [n.id, n]));
+  const { pos, width, height } = computeLandscapeLayout(land);
+  const selected = { current: null };
+
+  // —— 详解面板（点击/键盘选中后更新；窄屏选中后滚动到详解，桌面图与详解并列无需滚动）——
+  const detail = el('div', 'lib-land-detailbox');
+  detail.appendChild(el('p', 'lib-muted', '点选图中节点或下方层级文本中的节点，查看问题、思想、例子、能力变化、局限与前后关系。'));
+  const selectNode = (node, options = {}) => {
+    const { scroll = true } = options;
+    selected.current = node;
+    detail.textContent = '';
+    detail.appendChild(renderLandscapeDetail(land, node, nodeById));
+    for (const item of textButtons) {
+      item.classList.toggle('lib-land-item-active', item.dataset.landId === node.id);
+    }
+    // 窄屏反馈：选中后把详解滚入视野；尊重 prefers-reduced-motion；初始加载不滚、不抢焦点。
+    if (scroll && typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
+      const narrow = window.matchMedia('(max-width: 900px)').matches;
+      if (narrow && typeof detail.scrollIntoView === 'function') {
+        const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        detail.scrollIntoView({ behavior: reduced ? 'auto' : 'smooth', block: 'nearest' });
+      }
+    }
+  };
+
+  // —— SVG（桌面主视图；窄屏 CSS 隐藏，层级文本优先）——
+  const svg = svgEl('svg', { class: 'lib-land-svg', viewBox: `0 0 ${width} ${height}`, role: 'group', 'aria-label': '广域认知脉络图' });
+  // 边先画（在下层）。
+  for (const edge of land.edges ?? []) {
+    const a = pos.get(edge.from);
+    const b = pos.get(edge.to);
+    if (!a || !b) continue;
+    const line = svgEl('line', {
+      x1: a.x, y1: a.y, x2: b.x, y2: b.y,
+      class: `lib-land-edge lib-land-edge-${edge.kind}`,
+    });
+    const title = svgEl('title');
+    title.textContent = edge.kind === 'academic'
+      ? `学术关系：${edge.note ?? ''}（来源：${edge.source?.note ?? ''}）`
+      : `建议的阅读顺序（编辑安排）：${edge.note ?? ''}`;
+    line.appendChild(title);
+    svg.appendChild(line);
+  }
+  // 节点后画（在上层），可点击/可键盘。
+  const textButtons = [];
+  for (const node of land.nodes ?? []) {
+    const p = pos.get(node.id);
+    if (!p) continue;
+    const g = svgEl('g', {
+      class: 'lib-land-node',
+      tabindex: '0',
+      role: 'button',
+      'aria-label': `${node.title}（${node.when ?? ''}）`,
+    });
+    g.appendChild(svgEl('circle', { cx: p.x, cy: p.y, r: 17, class: 'lib-land-dot' }));
+    const label = svgEl('text', { x: p.x, y: p.y + 32, class: 'lib-land-label', 'text-anchor': 'middle' });
+    label.textContent = landscapeNodeLabel(node);
+    g.appendChild(label);
+    g.addEventListener('click', () => selectNode(node));
+    g.addEventListener('keydown', (event) => {
+      if (event?.key === 'Enter' || event?.key === ' ') {
+        event?.preventDefault?.();
+        selectNode(node);
+      }
+    });
+    svg.appendChild(g);
+  }
+  // —— 图 + 详解：桌面并列（反馈立即可见），窄屏上下排（选中后滚动到详解）。 ——
+  const main = el('div', 'lib-land-main');
+  const svgWrap = el('div', 'lib-land-svgwrap');
+  svgWrap.appendChild(svg);
+  main.appendChild(svgWrap);
+  main.appendChild(detail);
+  box.appendChild(main);
+
+  // —— 层级文本（与 SVG 同数据；窄屏主视图，桌面为可访问文本轨）——
+  const layersBox = el('div', 'lib-land-layers');
+  for (const layer of land.layers ?? []) {
+    const details = el('details', 'lib-land-layer');
+    details.open = true;
+    const summary = el('summary', 'lib-land-layer-summary');
+    summary.appendChild(el('strong', null, layer.title ?? ''));
+    summary.appendChild(el('span', 'lib-res-meta', ` —— ${layer.summary ?? ''}（${(land.nodes ?? []).filter((n) => n.layer === layer.id).length} 个节点）`));
+    details.appendChild(summary);
+    const list = el('div', 'lib-land-layer-body');
+    for (const node of (land.nodes ?? []).filter((n) => n.layer === layer.id)) {
+      const button = el('button', 'lib-land-item', `${node.title}（${node.when ?? ''}）—— ${node.problem ?? ''}`);
+      button.type = 'button';
+      button.dataset.landId = node.id;
+      button.addEventListener('click', () => selectNode(node));
+      textButtons.push(button);
+      list.appendChild(button);
+    }
+    details.appendChild(list);
+    layersBox.appendChild(details);
+  }
+  box.appendChild(layersBox);
+
+  // —— 学习路径（4–6 条；节点序即建议阅读顺序）——
+  if (Array.isArray(land.paths) && land.paths.length > 0) {
+    box.appendChild(el('h3', 'lib-block-title', '学习路径（建议阅读顺序，编辑排定）'));
+    for (const path of land.paths) {
+      const item = el('div', 'lib-land-path');
+      item.appendChild(el('p', 'lib-land-path-title', path.title ?? ''));
+      if (path.description) item.appendChild(el('p', 'lib-zone-how', path.description));
+      const chain = el('p', 'lib-first-line');
+      (path.nodeIds ?? []).forEach((ref, i) => {
+        if (i > 0) chain.appendChild(document.createTextNode(' → '));
+        const node = nodeById.get(ref);
+        if (node) {
+          const button = el('button', 'lib-land-chain', node.title);
+          button.type = 'button';
+          button.addEventListener('click', () => selectNode(node));
+          chain.appendChild(button);
+        } else {
+          chain.appendChild(document.createTextNode(ref));
+        }
+      });
+      item.appendChild(chain);
+      box.appendChild(item);
+    }
+  }
+
+  // 默认选中首个节点：详解不经点击即可见（图文同屏，讲解不藏在交互之后）；
+  // 初始加载不滚动、不抢焦点（scroll:false）。
+  if ((land.nodes ?? []).length > 0) selectNode(land.nodes[0], { scroll: false });
+  return box;
+}
+
+function renderMap(container) {
+  // renderLibrary 已是本轮生效库（renderApp 经 computeEffective 单入口算出）；地图直接读它。
+  const nodes = renderLibrary.map?.nodes ?? [];
+  const edges = renderLibrary.map?.edges ?? [];
+  const overlay = currentGuidanceOverlay();
+  const nodeById = new Map(nodes.map((n) => [n.id, n]));
+  const page = el('div', 'lib-page lib-map');
+  container.appendChild(page);
+  page.appendChild(crumb([{ text: '首页', href: '#/home' }, { text: '领域地图' }]));
+
+  // PLAN REV001：广域认知脉络图为主体；旧 009 基线地图保留为次级区（数据与校验不动）。
+  const land = renderLibrary.landscape;
+  const landActive = land && Array.isArray(land.nodes) && land.nodes.length > 0;
+  if (landActive) {
+    page.appendChild(el('h2', 'lib-display', '领域认识 · 广域脉络图'));
+    page.appendChild(el('p', 'lib-sub', '从 AI 发展的整体脉络理解 Agent：三层结构（AI 背景 · Agent 全景 · 专题分支），层内与层间是并行分支的合流而非单线进化；点击或键盘选节点看详解，层级文本与图同一份数据，手机上以文本为主。'));
+    page.appendChild(renderLandscape(land));
+    page.appendChild(el('h3', 'lib-block-title', '站内专题认识图（DYNAMIC-GUIDANCE-009 基线）'));
+    page.appendChild(el('p', 'lib-zone-how', '起步方向的专题文字地图：problem/method 两侧、关系语义与来源逐条标注，数据契约与导学覆盖层规则不变。'));
+  } else {
+    // 过渡态（来源审计未交付）：如实说明，不放假数据；专题基线地图仍是本页主体。
+    page.appendChild(
+      el('p', 'lib-notice-flat', '广域认知脉络图建设中：等待 ai-agent-landscape-source-audit 来源包核查完成后补入（20–26 节点、AI 背景/Agent 全景/专题三层 + 学习路径）。下方为站内专题认识图（009 基线）。'),
+    );
+  }
+  page.appendChild(el('h2', 'lib-display', landActive ? '专题认识图 · 小型文字地图' : 'Agent 协作 · 小型文字地图'));
+  page.appendChild(el('p', 'lib-sub', '从「研究对象／问题」与「方法／解决思想」两侧看当前起步方向：每个节点是一段可核对的文字，每条连线注明它的语义与来源，未连接处只作待查问题。'));
+  page.appendChild(el('p', 'lib-map-note', MAP_PROVENANCE_NOTE));
+  page.appendChild(el('p', 'lib-map-note', MAP_NO_PROGRESS_NOTE));
+  page.appendChild(el('p', 'lib-map-note', MAP_UNREVIEWED_NOTE));
+
+  // 未入图方向：不写死条目名，按当前数据派生（哪个 active 方向的 id/步骤既不在节点 ref，
+  // 也不在边的端点/evidence，即本轮未进入基线）——避免数据变化后文案陈旧（B 包审查项：source pinning）。
+  const represented = new Set();
+  for (const n of nodes) {
+    represented.add(n.id);
+    for (const r of n.refs ?? []) represented.add(r);
+  }
+  for (const e of edges) {
+    represented.add(e.from);
+    represented.add(e.to);
+    for (const ev of e.evidence ?? []) represented.add(ev);
+  }
+  const excludedDirections = activeDirections(renderLibrary).filter((d) => {
+    if (represented.has(d.id)) return false;
+    return !trackEntries(renderLibrary, d.id, 'start').some((s) => represented.has(s.id));
+  });
+  if (excludedDirections.length > 0) {
+    page.appendChild(
+      el('p', 'lib-map-note', `${MAP_BASELINE_SCOPE_NOTE} 本轮未进入基线的方向：${excludedDirections.map((d) => d.title).join('、')}。`),
+    );
+  }
+
+  // C 包：覆盖层示例条目（节点/边/字段调整）进入本页时按 R6 规则②常驻横幅＋逐条 meta。
+  const mapRefs = [];
+  for (const n of nodes) mapRefs.push(`map-node:${n.id}:`, ...['label', 'summary', 'refs'].map((f) => `map-node:${n.id}:${f}`));
+  for (const e of edges) mapRefs.push(`map-edge:${e.id}:`, ...['meaning', 'evidence'].map((f) => `map-edge:${e.id}:${f}`));
+  const mapAdjustments = mapRefs.map((ref) => overlayEntry(overlay, ref)).filter(Boolean);
+  if (mapAdjustments.some((entry) => entry.example === true) || nodes.some((n) => n.example === true) || edges.some((e) => e.example === true)) {
+    page.appendChild(el('p', 'lib-example-banner', `${EXAMPLE_BANNER_TEXT}：本页含覆盖层示例条目，不是真实导学调整`));
+  }
+  if (mapAdjustments.length > 0) {
+    page.appendChild(
+      el('p', 'lib-map-note', `本页有 ${mapAdjustments.length} 处导学调整来自已确认提案（来源逐条注明；内容模块文件未被改写）。`),
+    );
+  }
+
+  // 起步动线一行：首页 → 地图 → 问题导读（primer）→ 原文（论文卡）。
+  const pathLine = el('p', 'lib-map-path');
+  pathLine.appendChild(el('span', 'lib-map-inline-label', '起步动线：'));
+  const focus = resolveHomeFocus(renderBase);
+  pathLine.appendChild(link('#/home', '首页'));
+  pathLine.appendChild(document.createTextNode(' → '));
+  pathLine.appendChild(el('span', null, '本页地图'));
+  pathLine.appendChild(document.createTextNode(' → '));
+  const primer = focus.step?.resolved?.kind === 'article'
+    ? link(focus.step.resolved.href, focus.step.resolved.title)
+    : link('#/home', '问题导读');
+  pathLine.appendChild(primer);
+  pathLine.appendChild(document.createTextNode(' → 论文原文与「我的记录」文本'));
+  page.appendChild(pathLine);
+
+  if (nodes.length === 0) {
+    page.appendChild(emptyBox('地图尚未接入：基线节点将在来源核查完成后由内容工作补入。'));
+    return;
+  }
+
+  // 两侧分栏。
+  const sides = el('div', 'lib-map-sides');
+  for (const side of ['problem', 'method']) {
+    const col = el('section', `lib-map-col lib-map-col-${side}`);
+    col.appendChild(el('h3', 'lib-map-col-title', MAP_SIDE_LABELS[side] ?? side));
+    const sideNodes = nodes.filter((n) => n.side === side);
+    if (sideNodes.length === 0) col.appendChild(el('p', 'lib-muted', '（本侧暂无节点）'));
+    for (const node of sideNodes) col.appendChild(renderMapNode(renderLibrary, node));
+    sides.appendChild(col);
+  }
+  page.appendChild(sides);
+
+  // 关系表。
+  page.appendChild(el('h3', 'lib-block-title', '有据关联（编辑排定的概念关联，非论文引用）'));
+  const edgesBox = el('div', 'lib-map-edges');
+  if (edges.length === 0) {
+    edgesBox.appendChild(el('p', 'lib-muted', '暂无可呈现的关系；待来源核查后补入。'));
+  } else {
+    for (const edge of edges) edgesBox.appendChild(renderMapEdge(renderLibrary, edge, nodeById));
+  }
+  page.appendChild(edgesBox);
+  page.appendChild(el('p', 'lib-map-foot', `当前基线共 ${nodes.length} 个节点、${edges.length} 条关系（含覆盖层后总额受 R1 上限约束）。这些计数是内容规模，不是任何人的阅读进度。`));
+}
+
+// ---------- 导学调整页（提案提交→预览→确认→撤销→备份；本机闭环，无网络写入） ----------
+
+function renderGuidance(container) {
+  const page = el('div', 'lib-page lib-guidance');
+  container.appendChild(page);
+  page.appendChild(crumb([{ text: '首页', href: '#/home' }, { text: '导学调整' }]));
+  page.appendChild(el('h2', 'lib-display', '导学调整（本机提案闭环）'));
+  page.appendChild(
+    el(
+      'p',
+      'lib-intro',
+      '粘贴或导入有版本的结构化调整提案（kind=rw.guidance-proposal）：网站做白名单校验与差异预览，逐条显式确认后写入本机导学覆盖层；未确认前刷新/关闭即整案丢弃。覆盖层只改指导字段——不写论文事实、不写已读状态、不读写你的笔记与待读清单（那是另一个独立键 research-workbench:v3）。',
+    ),
+  );
+  for (const notice of guidanceUi.notices.splice(0)) {
+    page.appendChild(el('p', 'lib-notice-flat', notice));
+  }
+  const storage = guidanceStorage();
+  const loaded = storage ? loadOverlay(storage, renderBase) : { kind: 'unavailable', overlay: null, raw: null };
+  if (loaded.kind === 'unavailable') {
+    page.appendChild(el('p', 'lib-notice-flat', '本浏览器存储不可用：导学覆盖层无法读写，页面按基线内容显示；原记录不受影响。'));
+  } else if (loaded.kind === 'corrupt') {
+    page.appendChild(
+      el('p', 'lib-example-banner', '导学覆盖层存储已损坏：页面按基线内容显示（你的 v3 笔记不受影响）。不猜测修复、不静默清空——建议先导出坏档原文自查。'),
+    );
+    const rawBtn = el('button', 'lib-btn', '导出坏档原文（供自查）');
+    rawBtn.type = 'button';
+    rawBtn.addEventListener('click', () => {
+      downloadGuidanceFile(`research-workbench-guidance-corrupt-${new Date().toISOString().slice(0, 10)}.txt`, loaded.raw ?? '', 'text/plain');
+      guidanceUi.corruptExported = true;
+      pushGuidanceNotice('坏档原文已导出；确认备份后可重置。');
+      renderApp();
+    });
+    page.appendChild(rawBtn);
+    if (guidanceUi.corruptExported) {
+      const forceReset = el('button', 'lib-btn', '已导出坏档，确认重置覆盖层');
+      forceReset.type = 'button';
+      forceReset.addEventListener('click', async () => {
+        const r = await resetCorruptOverlay({ storage, navigatorLike: guidanceNavigator(), base: renderBase });
+        pushGuidanceNotice(r.ok ? '已重置：覆盖层回到空态（seq 继续递增）。' : r.message ?? '重置未执行。');
+        guidanceUi.corruptExported = false;
+        renderApp();
+      });
+      page.appendChild(forceReset);
+    }
+  }
+
+  // —— 提交区（复制粘贴或本地文件；两者同走一条校验路径）——
+  const submit = el('section', 'lib-guidance-block');
+  submit.appendChild(el('h3', 'lib-block-title', '提交调整提案（粘贴 JSON 或选择本地文件）'));
+  submit.appendChild(
+    el('p', 'lib-muted', '提案须为有界结构化 JSON（来源类型＋日期、稳定目标、旧版依据 expectedBase、拟变更值、理由、证据边界）。解析失败或不合规只会提示「尚未形成可应用调整」，不会宣称任何路线更新。'),
+  );
+  const textarea = el('textarea', 'lib-guidance-textarea');
+  textarea.placeholder = '把提案 JSON 粘贴到这里（或点下方按钮选择 .json 文件填入）…';
+  textarea.setAttribute('aria-label', '导学提案 JSON 文本');
+  submit.appendChild(textarea);
+  const validateBtn = el('button', 'lib-btn', '校验并预览');
+  validateBtn.type = 'button';
+  validateBtn.addEventListener('click', () => submitProposalText(textarea.value ?? ''));
+  submit.appendChild(validateBtn);
+  const fileInput = el('input', 'lib-guidance-file');
+  fileInput.type = 'file';
+  fileInput.accept = '.json,application/json';
+  fileInput.setAttribute('aria-label', '选择导学提案 JSON 文件');
+  fileInput.addEventListener('change', async () => {
+    const file = fileInput.files && fileInput.files[0];
+    if (!file) return;
+    try {
+      const text = await readProposalFileText(file);
+      textarea.value = text;
+      submitProposalText(text);
+    } catch (e) {
+      pushGuidanceNotice(`读取文件失败：${e?.message ?? '未知原因'}；未做任何更改。`);
+      renderApp();
+    }
+  });
+  submit.appendChild(fileInput);
+  if (guidanceUi.submitErrors) {
+    const rej = el('p', 'lib-example-banner', `尚未形成可应用调整：${guidanceUi.submitErrors.firstError}`);
+    submit.appendChild(rej);
+    const ul = el('ul', 'lib-list');
+    for (const err of guidanceUi.submitErrors.errors.slice(0, 6)) ul.appendChild(el('li', 'lib-muted', err));
+    submit.appendChild(ul);
+  }
+  page.appendChild(submit);
+
+  // —— 待确认预览（仅本会话内存；pending 不落盘）——
+  for (const pending of guidanceUi.pending) renderProposalPreview(page, pending);
+  if (guidanceUi.pending.length === 0) {
+    const none = el('section', 'lib-guidance-block');
+    none.appendChild(el('p', 'lib-muted', '当前没有待确认提案。'));
+    page.appendChild(none);
+  }
+
+  renderGuidanceEffective(page, loaded);
+  renderGuidanceHistory(page, loaded);
+  renderGuidanceBackup(page, loaded);
+  renderGuidanceBaselineCopy(page);
+}
+
+function renderProposalPreview(page, pending) {
+  const proposal = pending.proposal;
+  const overlay = currentGuidanceOverlay();
+  const box = el('section', 'lib-guidance-block lib-preview');
+  box.appendChild(
+    el(
+      'h3',
+      'lib-block-title',
+      `提案 ${proposal.id} · 来源：${ORIGIN_SOURCE_LABELS[proposal.origin.sourceType] ?? proposal.origin.sourceType} ${proposal.origin.asOf}（${proposal.origin.label}）`,
+    ),
+  );
+  if (proposal.example === true) box.appendChild(el('p', 'lib-example-banner', `${EXAMPLE_BANNER_TEXT}：这是示例提案（顶部常驻），确认后写入的条目也将永久携带示例标记`));
+  box.appendChild(el('p', 'lib-preview-evidence', `证据边界：${proposal.origin.evidenceNote}`));
+  box.appendChild(
+    el('p', 'lib-muted', '逐条选择「采纳此条 / 保持旧值」；stale-base（旧值与当前生效值不一致）以三格对照呈现、逐条判断、不自动合并。「确认并写入」只写入被采纳的条目，写入完整成功或旧状态不变。'),
+  );
+  const ul = el('ul', 'lib-list');
+  for (const item of pending.validation.items) {
+    const li = el('li', 'lib-preview-item');
+    const head = el('p', 'lib-preview-target');
+    head.appendChild(
+      document.createTextNode(
+        `#${item.index + 1} ${targetLabel(renderBase, overlay, { type: item.target.type, id: item.target.id }, item.target.field ?? '')}（${item.op}${item.status === 'stale' ? ' · stale-base：expectedBase 与当前生效值不一致，见三格对照' : ''}）`,
+      ),
+    );
+    li.appendChild(head);
+    const dl = el('dl', 'lib-preview-diff');
+    const rows = [
+      ['提案旧值', item.op === 'insert' ? '（新增，无旧值）' : guidanceDisplayValue(item.proposalOld ?? '')],
+      ['当前生效值', item.baseCurrent === null || item.baseCurrent === undefined ? '（新增目标）' : guidanceDisplayValue(item.baseCurrent)],
+      ['拟变更为新值', guidanceDisplayValue(item.newValue)],
+      ['理由', item.reason],
+    ];
+    for (const [label, value] of rows) {
+      dl.appendChild(el('dt', null, label));
+      dl.appendChild(el('dd', null, value));
+    }
+    li.appendChild(dl);
+    const choiceLine = el('p', 'lib-preview-choice');
+    const acceptBtn = el('button', 'lib-btn', '✓ 采纳此条');
+    acceptBtn.type = 'button';
+    if (pending.choices[item.ref] === 'accept') acceptBtn.classList.add('lib-choice-on');
+    acceptBtn.addEventListener('click', () => {
+      pending.choices[item.ref] = 'accept';
+      renderApp();
+    });
+    const keepBtn = el('button', 'lib-btn', '✗ 保持旧值');
+    keepBtn.type = 'button';
+    if (pending.choices[item.ref] === 'keep') keepBtn.classList.add('lib-choice-on');
+    keepBtn.addEventListener('click', () => {
+      pending.choices[item.ref] = 'keep';
+      renderApp();
+    });
+    choiceLine.appendChild(acceptBtn);
+    choiceLine.appendChild(keepBtn);
+    choiceLine.appendChild(el('span', 'lib-muted', pending.choices[item.ref] ? `（已选：${pending.choices[item.ref] === 'accept' ? '采纳此条' : '保持旧值'}）` : '（未选择）'));
+    li.appendChild(choiceLine);
+    ul.appendChild(li);
+  }
+  box.appendChild(ul);
+  const actions = el('p', 'lib-focus-actions');
+  const confirmBtn = el('button', 'lib-btn', '确认并写入');
+  confirmBtn.type = 'button';
+  confirmBtn.addEventListener('click', () => confirmPendingProposal(pending));
+  const discardBtn = el('button', 'lib-btn', '整案不采纳');
+  discardBtn.type = 'button';
+  discardBtn.addEventListener('click', () => discardPendingProposal(pending));
+  const revalidateBtn = el('button', null, '重新预览（按当前生效态重算三格对照）');
+  revalidateBtn.type = 'button';
+  revalidateBtn.addEventListener('click', () => revalidatePendingProposal(pending));
+  actions.appendChild(confirmBtn);
+  actions.appendChild(discardBtn);
+  actions.appendChild(revalidateBtn);
+  box.appendChild(actions);
+  page.appendChild(box);
+}
+
+// —— 当前生效的导学调整 + 撤销最近一次（R5：撤销只回指导覆盖层、一次全回，不丢笔记）——
+function renderGuidanceEffective(page, loaded) {
+  const section = el('section', 'lib-guidance-block');
+  section.appendChild(el('h3', 'lib-block-title', '当前生效的导学调整'));
+  const overlay = loaded.kind === 'ok' ? loaded.overlay : null;
+  const entries = Object.entries(overlay?.entries ?? {});
+  if (entries.length === 0) {
+    section.appendChild(el('p', 'lib-muted', '无生效调整：页面内容＝基线内容。'));
+  } else {
+    if (entries.some(([, entry]) => entry.example === true)) {
+      section.appendChild(el('p', 'lib-example-banner', `${EXAMPLE_BANNER_TEXT}：以下含示例条目（横幅从持久字段重建，刷新/重开/import 后仍显示）`));
+    }
+    const ul = el('ul', 'lib-list');
+    for (const [ref, entry] of entries) {
+      const li = el('li');
+      const firstColon = ref.indexOf(':');
+      const lastColon = ref.lastIndexOf(':');
+      const type = ref.slice(0, firstColon);
+      const id = ref.slice(firstColon + 1, lastColon);
+      const field = ref.slice(lastColon + 1);
+      li.appendChild(
+        document.createTextNode(
+          `${targetLabel(renderBase, overlay, { type, id }, field || '')} → ${guidanceDisplayValue(entry.value).slice(0, 80)}${guidanceDisplayValue(entry.value).length > 80 ? '…' : ''}（提案 ${entry.proposalId} · ${entry.appliedAt.slice(0, 10)}）`,
+        ),
+      );
+      li.appendChild(el('span', 'lib-res-meta', ` ${adjustLabel(entry)}`));
+      ul.appendChild(li);
+    }
+    section.appendChild(ul);
+  }
+  if (overlay && Object.keys(overlay.tombstones ?? {}).length > 0) {
+    section.appendChild(el('p', 'lib-muted', `已移除并封存（tombstones，释放后不复用）${Object.keys(overlay.tombstones).length} 个覆盖层自有 id；上限 ${40} 满时需先重置。`));
+  }
+  if (overlay?.undoSlot) {
+    const undoBtn = el('button', 'lib-btn', '撤销最近一次导学调整');
+    undoBtn.type = 'button';
+    undoBtn.disabled = !canUndo(overlay);
+    undoBtn.addEventListener('click', () => undoLastGuidance());
+    section.appendChild(undoBtn);
+    if (!canUndo(overlay)) {
+      section.appendChild(el('p', 'lib-muted', '撤销只支持回退最近一次「应用」；若末条是撤销/重置/导入，连续回退请走「重置导学覆盖层」。'));
+    }
+  } else {
+    section.appendChild(el('p', 'lib-muted', '没有可撤销的最近调整（撤销槽只保留最近一次应用前的完整快照）。'));
+  }
+  section.appendChild(el('p', 'lib-muted', '撤销＝恢复应用前的完整覆盖层快照并前向写入（seq+1，history 只追加）；多字段提案一次全回，不留半套；绝不触碰 v3 笔记。'));
+  page.appendChild(section);
+}
+
+// —— 基本历史（≤20 条摘要；只追加不回删）——
+function renderGuidanceHistory(page, loaded) {
+  const section = el('section', 'lib-guidance-block');
+  section.appendChild(el('h3', 'lib-block-title', '导学调整历史（本机，最多保留 20 条摘要）'));
+  const history = loaded.kind === 'ok' ? loaded.overlay?.history ?? [] : [];
+  if (history.length === 0) {
+    section.appendChild(el('p', 'lib-muted', '暂无记录：应用、撤销、导入、重置都会在此留下 seq 递增的条目。'));
+    page.appendChild(section);
+    return;
+  }
+  const ul = el('ul', 'lib-list');
+  for (const h of history) {
+    const li = el('li');
+    const kindLabel = { apply: '应用', undo: '撤销', import: '导入替换', reset: '重置' }[h.kind] ?? h.kind;
+    li.appendChild(
+      document.createTextNode(
+        `seq ${h.seq} · ${kindLabel} · ${h.appliedAt.slice(0, 10)} · ${h.summary}${h.origin ? `（来源：${ORIGIN_SOURCE_LABELS[h.origin.sourceType] ?? h.origin.sourceType}）` : ''}`,
+      ),
+    );
+    if (h.example === true) li.appendChild(el('span', 'lib-example-mark', ` ${EXAMPLE_BANNER_TEXT}`));
+    ul.appendChild(li);
+  }
+  section.appendChild(ul);
+  page.appendChild(section);
+}
+
+// —— 备份：导出 / 导入（三路比较、不默认覆盖）/ 重置（先导出再确认）——
+function renderGuidanceBackup(page, loaded) {
+  const section = el('section', 'lib-guidance-block');
+  section.appendChild(el('h3', 'lib-block-title', '备份与迁移（导出/导入都在浏览器内完成，服务无写路径）'));
+  const overlay = loaded.kind === 'ok' ? loaded.overlay : null;
+  const exportBtn = el('button', 'lib-btn', '导出导学覆盖层 JSON（不含撤销槽）');
+  exportBtn.type = 'button';
+  exportBtn.addEventListener('click', () => {
+    if (!overlay) {
+      pushGuidanceNotice('当前没有可导出的覆盖层（无生效调整）。');
+      renderApp();
+      return;
+    }
+    downloadGuidanceFile(`research-workbench-guidance-${new Date().toISOString().slice(0, 10)}.json`, exportOverlayText(overlay), 'application/json');
+    pushGuidanceNotice('已导出覆盖层 JSON（只含指导、来源与示例标记；不含本人笔记与撤销槽）。');
+    renderApp();
+  });
+  section.appendChild(exportBtn);
+  section.appendChild(el('p', 'lib-muted', 'v3 的 Markdown 导出仍是本人记录唯一备份；本档只是指导覆盖层的备份。'));
+
+  const importInput = el('input', 'lib-guidance-file');
+  importInput.type = 'file';
+  importInput.accept = '.json,application/json';
+  importInput.setAttribute('aria-label', '选择导学覆盖层备份 JSON 文件（导入比较用）');
+  importInput.addEventListener('change', async () => {
+    const file = importInput.files && importInput.files[0];
+    if (!file) return;
+    try {
+      const text = await readProposalFileText(file);
+      const parsed = parseImportedOverlay(text, renderBase);
+      if (parsed.status === 'reject') {
+        pushGuidanceNotice(`导入被拒绝：${parsed.message}`);
+      } else {
+        const comparison = compareImport(renderBase, overlay, parsed.overlay);
+        if (comparison.identical) {
+          pushGuidanceNotice('导入档与本机一致（seq、末条时间与生效内容三项全等），未写入。');
+        } else {
+          guidanceUi.importState = { incoming: parsed.overlay, comparison };
+          pushGuidanceNotice('导入档与本机不一致：先看下方逐项差异，再显式选择「保持本机」或「替换」；不会默认覆盖本机。');
+        }
+      }
+    } catch (e) {
+      pushGuidanceNotice(`读取导入文件失败：${e?.message ?? '未知原因'}`);
+    }
+    renderApp();
+  });
+  section.appendChild(importInput);
+  const rawBtn = el('button', null, '下载存储原始档（自查用；含未识别内容时不解析）');
+  rawBtn.type = 'button';
+  rawBtn.addEventListener('click', () => {
+    const storage = guidanceStorage();
+    let rawText = '';
+    try {
+      rawText = storage ? String(storage.getItem(GUIDANCE_KEY) ?? '') : '';
+    } catch {
+      rawText = '';
+    }
+    downloadGuidanceFile('research-workbench-guidance-raw.txt', rawText, 'text/plain');
+  });
+  section.appendChild(rawBtn);
+
+  if (guidanceUi.importState) {
+    const { incoming, comparison } = guidanceUi.importState;
+    const box = el('div', 'lib-import-diff');
+    box.appendChild(
+      el(
+        'p',
+        'lib-notice-flat',
+        `本机 seq ${comparison.local.seq}（末条 ${comparison.local.lastAppliedAt || '—'}）；导入档 seq ${comparison.incoming.seq}（末条 ${comparison.incoming.lastAppliedAt || '—'}）。比较以 seq＋时间＋生效内容 hash 为准，不比版本串。`,
+      ),
+    );
+    if (comparison.diff.length === 0) {
+      box.appendChild(el('p', 'lib-muted', '逐 targetRef 比较：内容无差异（差异仅在 seq/时间线）。'));
+    } else {
+      const ul = el('ul', 'lib-list');
+      for (const d of comparison.diff) {
+        ul.appendChild(
+          el('li', null, `${d.label}：本机「${(d.local ?? '—').slice(0, 60)}」 vs 导入「${(d.incoming ?? '—').slice(0, 60)}」（${d.kind}）`),
+        );
+      }
+      box.appendChild(ul);
+    }
+    const keepBtn = el('button', 'lib-btn', '保持本机');
+    keepBtn.type = 'button';
+    keepBtn.addEventListener('click', () => {
+      guidanceUi.importState = null;
+      pushGuidanceNotice('保持本机：导入档未写入。');
+      renderApp();
+    });
+    const replaceBtn = el('button', 'lib-btn', '导出本机后替换');
+    replaceBtn.type = 'button';
+    replaceBtn.addEventListener('click', async () => {
+      const storage = guidanceStorage();
+      if (!storage) return;
+      const result = await importReplaceOverlay({ storage, navigatorLike: guidanceNavigator(), incoming, base: renderBase });
+      guidanceUi.importState = null;
+      pushGuidanceNotice(
+        result.ok
+          ? '已按导入档替换覆盖层（seq 在本机原值上 +1，不采外来 seq；撤销槽＝本机替换前快照，可撤销本次替换）。'
+          : result.message ?? '替换未执行。',
+      );
+      renderApp();
+    });
+    box.appendChild(keepBtn);
+    box.appendChild(replaceBtn);
+    section.appendChild(box);
+  }
+
+  if (!guidanceUi.resetArmed) {
+    const resetBtn = el('button', 'lib-btn', '重置导学覆盖层（先导出备份）');
+    resetBtn.type = 'button';
+    resetBtn.addEventListener('click', () => {
+      guidanceUi.resetArmed = true;
+      pushGuidanceNotice('重置会清空覆盖层（含撤销槽与 tombstones，reset 后不可再撤销）；导出的 JSON 是唯一找回途径。确认请再点一次。');
+      renderApp();
+    });
+    section.appendChild(resetBtn);
+  } else {
+    const confirmResetBtn = el('button', 'lib-btn', '确认重置（我已导出备份）');
+    confirmResetBtn.type = 'button';
+    confirmResetBtn.addEventListener('click', async () => {
+      const storage = guidanceStorage();
+      if (!storage) return;
+      const result = await resetOverlay({ storage, navigatorLike: guidanceNavigator(), base: renderBase });
+      guidanceUi.resetArmed = false;
+      pushGuidanceNotice(
+        result.ok
+          ? '已重置：tombstones 与撤销槽同时清空（新周期可复用覆盖层自有 id；旧提案若与新生效态不符，按 stale-base 进预览，不静默拒绝）。'
+          : result.message ?? '重置未执行。',
+      );
+      renderApp();
+    });
+    const cancelBtn = el('button', null, '取消');
+    cancelBtn.type = 'button';
+    cancelBtn.addEventListener('click', () => {
+      guidanceUi.resetArmed = false;
+      renderApp();
+    });
+    section.appendChild(confirmResetBtn);
+    section.appendChild(cancelBtn);
+  }
+  page.appendChild(section);
+}
+
+// —— 复制规范基线（R3：expectedBase 由同一 canonicalSerialize 函数导出，防手抄不一致）——
+function collectBaselineTargets(base) {
+  const out = [];
+  const push = (label, type, id, field) => out.push({ label, type, id, field });
+  for (const d of base?.directions ?? []) {
+    if (d.status === 'deferred') continue;
+    for (const s of d.startRoute ?? []) {
+      if (!s?.id || s.kind === 'external') continue;
+      for (const f of ['purpose', 'readWhen', 'check', 'stage', 'required', 'passMode']) {
+        push(`步骤 ${s.id} · ${FIELD_LABELS[f] ?? f}`, 'route-step', s.id, f);
+      }
+      push(`步骤 ${s.id} · 整体（remove 对照）`, 'route-step', s.id, '');
+    }
+    push(`方向 ${d.id} · openQuestions（当前数组）`, 'direction', d.id, 'openQuestions');
+  }
+  const stepTargets = new Set();
+  for (const d of base?.directions ?? []) {
+    for (const s of [...(d.startRoute ?? []), ...(d.archiveRoute ?? [])]) {
+      if (s?.kind === 'paper') stepTargets.add(`paper:${s.paperId}`);
+      if (s?.kind === 'article') stepTargets.add(`material:${s.materialId}`);
+    }
+  }
+  for (const ref of stepTargets) {
+    const [type, id] = ref.split(':');
+    for (const f of ['learner.gist', 'learner.value', 'learner.intent']) push(`${type === 'paper' ? '论文卡' : '材料'} ${id} · ${FIELD_LABELS[f]}`, type, id, f);
+    push(`${type === 'paper' ? '论文卡' : '材料'} ${id} · questions（当前数组）`, type, id, 'questions');
+  }
+  for (const n of base?.map?.nodes ?? []) {
+    for (const f of ['label', 'summary', 'refs']) push(`地图节点 ${n.id} · ${FIELD_LABELS[f]}`, 'map-node', n.id, f);
+    push(`地图节点 ${n.id} · 整体（remove 对照）`, 'map-node', n.id, '');
+  }
+  for (const e of base?.map?.edges ?? []) {
+    for (const f of ['meaning', 'evidence']) push(`地图关系 ${e.id} · ${FIELD_LABELS[f]}`, 'map-edge', e.id, f);
+    push(`地图关系 ${e.id} · 整体（remove 对照）`, 'map-edge', e.id, '');
+  }
+  push('首页焦点 · routeId', 'home-focus', 'home', 'routeId');
+  push('首页焦点 · note', 'home-focus', 'home', 'note');
+  return out;
+}
+
+async function copyGuidanceBaseline(target, outSpan) {
+  const text = canonicalBaseline(renderBase, currentGuidanceOverlay(), { type: target.type, id: target.id, field: target.field }) ?? '（目标不可解析）';
+  outSpan.textContent = text;
+  const clipboard = guidanceNavigator()?.clipboard ?? null;
+  if (clipboard?.writeText) {
+    try {
+      await clipboard.writeText(text);
+      outSpan.textContent = `${text}（已复制到剪贴板）`;
+    } catch {
+      // 剪贴板不可用：文本已在页面上，手动选取复制。
+    }
+  }
+}
+
+function renderGuidanceBaselineCopy(page) {
+  const details = el('details', 'lib-guidance-block');
+  details.appendChild(el('summary', 'lib-block-title', '复制规范基线（写提案 expectedBase 用）'));
+  details.appendChild(
+    el('p', 'lib-muted', '基线＝该目标在「应用本提案前」的生效值，经唯一 canonicalSerialize 序列化（字符串原文、数组以分隔符连接、对象按白名单字段声明序）。手抄不一致会按 stale-base 进预览，不会静默拒绝。'),
+  );
+  const ul = el('ul', 'lib-list');
+  for (const target of collectBaselineTargets(renderBase)) {
+    const li = el('li');
+    li.appendChild(el('span', 'lib-baseline-label', `${target.label}：`));
+    const outSpan = el('span', 'lib-baseline-value', '');
+    const btn = el('button', null, '复制基线');
+    btn.type = 'button';
+    btn.addEventListener('click', () => copyGuidanceBaseline(target, outSpan));
+    li.appendChild(btn);
+    li.appendChild(outSpan);
+    ul.appendChild(li);
+  }
+  details.appendChild(ul);
+  page.appendChild(details);
 }
 
 // ---------- 方向与路线 ----------
@@ -2241,6 +3727,24 @@ function renderRoute(container, directionId) {
   }
   page.appendChild(el('h2', null, direction.title));
   if (direction.summary) page.appendChild(el('p', 'lib-intro', direction.summary));
+  // C 包（R6 规则②）：本页若渲染了示例导学调整（步骤字段/新增步骤/追加问题），顶部常驻示例横幅。
+  {
+    const routeOverlay = currentGuidanceOverlay();
+    const refs = [`direction:${direction.id}:openQuestions`];
+    for (const track of ['start', 'archive']) {
+      for (const e of trackEntries(renderLibrary, direction.id, track)) {
+        refs.push(`route-step:${e.id}:`, ...['purpose', 'readWhen', 'check', 'stage', 'required', 'passMode'].map((f) => `route-step:${e.id}:${f}`));
+      }
+    }
+    const adjusted = refs.map((ref) => overlayEntry(routeOverlay, ref)).filter(Boolean);
+    const exampleStep = [...trackEntries(renderLibrary, direction.id, 'start'), ...trackEntries(renderLibrary, direction.id, 'archive')].some((e) => e.example === true);
+    if (exampleStep || adjusted.some((entry) => entry.example === true)) {
+      page.appendChild(el('p', 'lib-example-banner', `${EXAMPLE_BANNER_TEXT}：本页含示例导学调整，不是真实指导`));
+    }
+    if (adjusted.length > 0) {
+      page.appendChild(el('p', 'lib-adjust-meta', `本页有 ${adjusted.length} 处导学调整来自已确认提案（逐条注明；内容模块文件未被改写）。`));
+    }
+  }
 
   // 延后方向（01 C）：旧书签直达保留一行说明 + 谱系，不进默认入口。
   if (directionStatusOf(direction) === 'deferred') {
@@ -2254,32 +3758,29 @@ function renderRoute(container, directionId) {
     );
   }
 
-  page.appendChild(el('h3', 'lib-block-title', '这个方向研究什么'));
-  if (direction.overview) page.appendChild(el('p', 'lib-para', direction.overview));
+  // PLAN-011 B2：旧介绍（对象/现状/理由/限制）保留为可展开、默认收起，不占主阅读；
+  // 复用既有折叠样式（lib-quick-group），原生 details/summary 键盘可达。来源列表移入下方「辅助来源」层。
+  const legacyIntro = el('details', 'lib-quick-group lib-route-legacy');
+  legacyIntro.appendChild(el('summary', null, '课题原始介绍（研究对象 / 当前研究情况 / 选择理由 / 难点与限制）'));
+  const legacyBody = el('div', 'lib-route-legacy-body');
+  legacyBody.appendChild(el('h3', 'lib-block-title', '这个方向研究什么'));
+  if (direction.overview) legacyBody.appendChild(el('p', 'lib-para', direction.overview));
 
-  page.appendChild(el('h3', 'lib-block-title', '当前研究情况'));
-  if (direction.stateOfField) page.appendChild(el('p', 'lib-para', direction.stateOfField));
-  if (direction.asOf) page.appendChild(el('p', 'lib-asof', `以上情况的核查截止日期：${direction.asOf}；之后的新工作需另行查新。`));
-  if (Array.isArray(direction.sources) && direction.sources.length > 0) {
-    const box = el('div', 'lib-sources');
-    box.appendChild(el('p', 'lib-sources-title', '支撑这些判断的公开来源'));
-    const ul = el('ul', 'lib-list');
-    for (const source of direction.sources) {
-      const li = el('li');
-      if (source.url) li.appendChild(externalLink(source.url, source.label));
-      else li.appendChild(document.createTextNode(source.label));
-      if (source.note) li.appendChild(document.createTextNode(` —— ${source.note}`));
-      ul.appendChild(li);
-    }
-    box.appendChild(ul);
-    page.appendChild(box);
-  }
+  legacyBody.appendChild(el('h3', 'lib-block-title', '当前研究情况'));
+  if (direction.stateOfField) legacyBody.appendChild(el('p', 'lib-para', direction.stateOfField));
+  if (direction.asOf) legacyBody.appendChild(el('p', 'lib-asof', `以上情况的核查截止日期：${direction.asOf}；之后的新工作需另行查新。`));
 
-  page.appendChild(el('h3', 'lib-block-title', '为什么考虑这个方向'));
-  if (direction.whyChoose) page.appendChild(el('p', 'lib-para', direction.whyChoose));
+  legacyBody.appendChild(el('h3', 'lib-block-title', '为什么考虑这个方向'));
+  if (direction.whyChoose) legacyBody.appendChild(el('p', 'lib-para', direction.whyChoose));
 
-  page.appendChild(el('h3', 'lib-block-title', '难点与不适用条件'));
-  if (direction.limits) page.appendChild(el('p', 'lib-para', direction.limits));
+  legacyBody.appendChild(el('h3', 'lib-block-title', '难点与不适用条件'));
+  if (direction.limits) legacyBody.appendChild(el('p', 'lib-para', direction.limits));
+  legacyIntro.appendChild(legacyBody);
+  page.appendChild(legacyIntro);
+
+  // PLAN-010 阶段 C + PLAN-011 B2：深化块按 正文导读（四轴/问题演化）→ 对照表（机制与表示）→
+  // 辅助来源（核查记录/论文联系/未定候选）三级排布；页内来源说明只说一次。
+  renderDirectionDeepening(page, direction);
 
   // 01 B：「初期怎么用这条」——纯文本一段，不是新板块。
   if (direction.startHint) page.appendChild(el('p', 'lib-intro', direction.startHint));
@@ -2331,6 +3832,12 @@ function renderRoute(container, directionId) {
     const ul = el('ul', 'lib-list');
     for (const question of direction.openQuestions) ul.appendChild(el('li', null, question));
     page.appendChild(ul);
+    // C 包（R3 direction append）：追加的问题在列表末尾如实出现，并带来源 meta 行（R4）。
+    const qEntry = overlayEntry(currentGuidanceOverlay(), `direction:${direction.id}:openQuestions`);
+    if (qEntry) {
+      page.appendChild(el('p', 'lib-adjust-meta', `末尾 ${Array.isArray(qEntry.value) ? qEntry.value.length : 0} 条为导学追加：${adjustLabel(qEntry)}`));
+      if (qEntry.example === true) page.appendChild(el('p', 'lib-example-mark', EXAMPLE_BANNER_TEXT));
+    }
   }
 }
 
@@ -2376,6 +3883,10 @@ function renderRouteTracks(page, direction, tracks) {
       }
       if (entry.external && entry.note) li.appendChild(el('p', 'lib-step-line', entry.note));
       if (entry.nextAction) li.appendChild(el('p', 'lib-step-line', entry.nextAction));
+      // C 包（R4/R6）：被覆盖层调整/新增的步骤追加纯文本 meta 行；示例条目明标示例，不冒充真实指导。
+      const stepMeta = adjustMetaFor(currentGuidanceOverlay(), 'route-step', entry.id, ['purpose', 'readWhen', 'check', 'stage', 'required', 'passMode']);
+      if (stepMeta) li.appendChild(el('p', 'lib-adjust-meta', stepMeta));
+      if (entry.example === true) li.appendChild(el('p', 'lib-example-mark', EXAMPLE_BANNER_TEXT));
       ol.appendChild(li);
     }
     return ol;
@@ -2408,7 +3919,8 @@ function renderRouteTracks(page, direction, tracks) {
 }
 
 // 起步卡三问（03 §1）：标题与覆盖行之后、正文之前；旧卡无 learner 不渲染（不伪填）。
-function renderLearnerBlock(article, item) {
+// kind＝'paper'|'material'（C 包 R4：被覆盖层调整的三问字段与追加问题带纯文本 meta 行）。
+function renderLearnerBlock(article, item, kind = 'paper') {
   const learner = item?.learner;
   if (!learner || typeof learner !== 'object') return;
   const box = el('section', 'lib-block');
@@ -2424,6 +3936,8 @@ function renderLearnerBlock(article, item) {
     p.appendChild(document.createTextNode(text));
     box.appendChild(p);
   }
+  const meta = adjustMetaFor(currentGuidanceOverlay(), kind, item.id, ['learner.gist', 'learner.value', 'learner.intent']);
+  if (meta) box.appendChild(el('p', 'lib-adjust-meta', meta));
   if (box.childNodes.length > 0) article.appendChild(box);
 }
 
@@ -2477,6 +3991,256 @@ function renderReadingActionsBlock(article, item, anchorPrefix, kind = 'paper') 
 }
 
 // ---------- 论文 ----------
+
+// PLAN-010 阶段 D：三段式导读（背景术语与读前问题 → 原文精读定位 → 实际讲解）。
+// 只有带 guidedReading 的首批卡渲染；定位段要求正文依据（coverage 为正文选读/正文），
+// 无依据自动降级为两段并如实标注「定位待核」。讲解必须是非空 blocks（原创解释，不复述摘要）。
+function renderGuidedReading(article, paper) {
+  const guided = paper?.guidedReading;
+  if (!guided || typeof guided !== 'object') return;
+  const box = el('section', 'lib-block lib-guided');
+  box.appendChild(el('h3', 'lib-block-title', '三段式导读：背景 → 定位 → 讲解'));
+  // ① 背景术语与读前问题
+  if (Array.isArray(guided.terms) && guided.terms.length > 0) {
+    const dl = el('dl', 'lib-guided-terms');
+    for (const term of guided.terms) {
+      dl.appendChild(el('dt', null, term.term ?? ''));
+      dl.appendChild(el('dd', null, term.note ?? ''));
+    }
+    box.appendChild(dl);
+  }
+  if (Array.isArray(guided.preQuestions) && guided.preQuestions.length > 0) {
+    const q = el('p', 'lib-step-line');
+    q.appendChild(el('strong', 'lib-step-label', '带着这些问题读：'));
+    q.appendChild(document.createTextNode(guided.preQuestions.join('　')));
+    box.appendChild(q);
+  }
+  // ② 原文精读定位（无正文依据时降级为两段并标注）
+  const hasTextBasis = ['partial-text', 'full-text'].includes(paper?.coverage?.mode);
+  const locateList = el('ul', 'lib-list');
+  if (hasTextBasis && Array.isArray(guided.locate) && guided.locate.length > 0) {
+    for (const item of guided.locate) {
+      const li = el('li');
+      const head = el('p', 'lib-step-line');
+      head.appendChild(el('strong', null, `${item.target} —— ${item.where}`));
+      li.appendChild(head);
+      if (item.note) li.appendChild(el('p', 'lib-step-line', item.note));
+      locateList.appendChild(li);
+    }
+    const p = el('p', 'lib-step-line');
+    p.appendChild(el('strong', 'lib-step-label', '原文精读定位：'));
+    box.appendChild(p);
+    box.appendChild(locateList);
+  } else {
+    box.appendChild(
+      el('p', 'lib-depth-note', '精读定位待核：本卡暂无正文依据，不给节级指引；取得原文并核对后再补定位段。'),
+    );
+  }
+  // ③ 实际讲解（原创解释性文字，非复述摘要）
+  if (Array.isArray(guided.explainBlocks) && guided.explainBlocks.length > 0) {
+    const inner = el('div', 'lib-guided-explain');
+    renderBlocks(inner, guided.explainBlocks);
+    box.appendChild(inner);
+  }
+  if (box.childNodes.length > 1) article.appendChild(box);
+}
+
+// PLAN-010 阶段 C：综述导学树——以综述章节结构为骨架的可展开层级树。
+// 每个节点必须有章节来源标注；站内 refs 解析为链接（编辑排定顺序，非论文引用，PF-07）。
+function renderSurveyTreeNode(node) {
+  const details = el('details', 'lib-tree-node');
+  const summary = el('summary', 'lib-tree-summary');
+  summary.appendChild(el('span', 'lib-tree-title', node.title ?? ''));
+  if (node.source) summary.appendChild(el('span', 'lib-tree-source', `来源：${node.source}`));
+  details.appendChild(summary);
+  const body = el('div', 'lib-tree-body');
+  if (node.explain) body.appendChild(el('p', 'lib-para', node.explain));
+  const refs = (node.refs ?? []).map((ref) => resolveMapRef(renderLibrary, ref)).filter(Boolean);
+  if (refs.length > 0) {
+    const line = el('p', 'lib-first-line');
+    line.appendChild(el('strong', 'lib-step-label', '站内回链（编辑排定，非引用）：'));
+    refs.forEach((ref, i) => {
+      if (i > 0) line.appendChild(document.createTextNode('；'));
+      if (ref.href) line.appendChild(link(ref.href, ref.label));
+      else line.appendChild(document.createTextNode(ref.label));
+    });
+    body.appendChild(line);
+  }
+  for (const child of node.children ?? []) body.appendChild(renderSurveyTreeNode(child));
+  details.appendChild(body);
+  return details;
+}
+
+function renderSurveyTree(article, paper) {
+  const tree = paper?.surveyTree;
+  if (!tree || !Array.isArray(tree.roots) || tree.roots.length === 0) return;
+  const box = el('section', 'lib-block lib-tree');
+  box.appendChild(el('h3', 'lib-block-title', '综述导学树（按章节来源展开）'));
+  if (tree.source) box.appendChild(el('p', 'lib-asof', tree.source));
+  if (tree.note) box.appendChild(el('p', 'lib-zone-how', tree.note));
+  for (const node of tree.roots) box.appendChild(renderSurveyTreeNode(node));
+  article.appendChild(box);
+}
+
+// PLAN-010 阶段 C + PLAN-011 B2：课题页深化块，三级排布——
+// ① 正文导读：四轴编辑分析框架、问题演化；② 对照表：机制与表示；③ 辅助来源：核查记录、论文间联系、未定候选。
+// 仅当方向数据携带对应字段时渲染；来源与编辑性质在页内只说一次（四轴 note 为主声明）。
+function renderDirectionDeepening(page, direction) {
+  const axis = direction?.axisAnalysis;
+  if (axis && Array.isArray(axis.axes) && axis.axes.length > 0) {
+    const box = el('section', 'lib-block');
+    box.appendChild(el('h3', 'lib-block-title', '正文导读 · 四轴编辑分析框架'));
+    if (axis.note) box.appendChild(el('p', 'lib-intro', axis.note));
+    const dl = el('dl', 'lib-axis-list');
+    for (const item of axis.axes) {
+      const dt = el('dt', null, item.title ?? '');
+      const dd = el('dd', null);
+      if (item.explain) dd.appendChild(el('p', 'lib-step-line', item.explain));
+      for (const example of item.examples ?? []) {
+        const line = el('p', 'lib-step-line');
+        const resolved = resolveMapRef(renderLibrary, example.ref);
+        if (resolved?.href) line.appendChild(link(resolved.href, resolved.label));
+        else line.appendChild(document.createTextNode(example.ref ?? '（关联未解析）'));
+        line.appendChild(document.createTextNode(` —— ${example.text ?? ''}`));
+        dd.appendChild(line);
+      }
+      if (item.unknown) {
+        const unknown = el('p', 'lib-depth-note');
+        unknown.appendChild(el('strong', null, '未定候选：'));
+        unknown.appendChild(document.createTextNode(item.unknown));
+        dd.appendChild(unknown);
+      }
+      dl.appendChild(dt);
+      dl.appendChild(dd);
+    }
+    box.appendChild(dl);
+    page.appendChild(box);
+  }
+
+  const evolution = direction?.problemEvolution;
+  if (evolution && Array.isArray(evolution.nodes) && evolution.nodes.length > 0) {
+    const box = el('section', 'lib-block');
+    box.appendChild(el('h3', 'lib-block-title', '正文导读 · 问题演化：从单 Agent 长任务到预算约束协作'));
+    if (evolution.note) box.appendChild(el('p', 'lib-zone-how', evolution.note));
+    const ol = el('ol', 'lib-timeline');
+    for (const node of evolution.nodes) {
+      const li = el('li', 'lib-timeline-item');
+      const head = el('p', 'lib-timeline-head');
+      head.appendChild(el('span', 'lib-timeline-when', node.when ?? ''));
+      const paper = node.paperId ? getPaper(renderLibrary, node.paperId) : null;
+      if (paper) head.appendChild(paperLink(paper));
+      else if (node.paperId) head.appendChild(el('span', 'lib-unsafe-link', `${node.paperId}（关联未解析）`));
+      li.appendChild(head);
+      if (node.text) li.appendChild(el('p', 'lib-step-line', node.text));
+      ol.appendChild(li);
+    }
+    box.appendChild(ol);
+    page.appendChild(box);
+  }
+
+  const mech = direction?.mechVsRep;
+  if (mech && mech.table && Array.isArray(mech.table.rows) && mech.table.rows.length > 0) {
+    const box = el('section', 'lib-block');
+    box.appendChild(el('h3', 'lib-block-title', '对照表 · 机制与表示：两个别混的层次'));
+    if (mech.intro) box.appendChild(el('p', 'lib-para', mech.intro));
+    box.appendChild(renderComparison({ columns: mech.table.columns, rows: mech.table.rows }));
+    if (mech.reading) box.appendChild(el('p', 'lib-zone-how', mech.reading));
+    page.appendChild(box);
+  }
+
+  // ③ 辅助来源：核查记录（方向支撑来源）+ 论文间联系 + 未定候选。
+  const sources = Array.isArray(direction?.sources) ? direction.sources : [];
+  const links = direction?.paperLinks;
+  const candidates = direction?.undecidedCandidates;
+  const auxBox = el('section', 'lib-block lib-direction-aux');
+  let auxHasContent = false;
+  if (sources.length > 0) {
+    auxHasContent = true;
+    auxBox.appendChild(el('h3', 'lib-block-title', '辅助来源 · 核查记录'));
+    auxBox.appendChild(el('p', 'lib-zone-how', '支撑「当前研究情况」等判断的公开来源；核实某个论断时回到这里逐条回查。'));
+    const box = el('div', 'lib-sources');
+    const ul = el('ul', 'lib-list');
+    for (const source of sources) {
+      const li = el('li');
+      if (source.url) li.appendChild(externalLink(source.url, source.label));
+      else li.appendChild(document.createTextNode(source.label));
+      if (source.note) li.appendChild(document.createTextNode(` —— ${source.note}`));
+      ul.appendChild(li);
+    }
+    box.appendChild(ul);
+    auxBox.appendChild(box);
+  }
+  if (Array.isArray(links) && links.length > 0) {
+    auxHasContent = true;
+    auxBox.appendChild(el('h3', 'lib-block-title', '辅助来源 · 论文间联系'));
+    // PLAN-011：编辑性质声明页内只说一次（四轴 note 已声明本页分析框架属性），此处只补来源性质一句。
+    auxBox.appendChild(el('p', 'lib-zone-how', '以下联系是编辑整理的对照读法，不是论文之间的引用关系；逐条依据见各卡的「来源与覆盖」。'));
+    const ul = el('ul', 'lib-list');
+    for (const item of links) {
+      const li = el('li');
+      const line = el('p', 'lib-step-line');
+      const from = item.from ? resolveMapRef(renderLibrary, item.from) : null;
+      const to = item.to ? resolveMapRef(renderLibrary, item.to) : null;
+      if (from?.href) line.appendChild(link(from.href, from.label));
+      else line.appendChild(document.createTextNode(item.from ?? '（未解析）'));
+      line.appendChild(document.createTextNode(' ↔ '));
+      if (to?.href) line.appendChild(link(to.href, to.label));
+      else line.appendChild(document.createTextNode(item.to ?? '（未解析）'));
+      line.appendChild(document.createTextNode(` —— ${item.note ?? ''}`));
+      li.appendChild(line);
+      ul.appendChild(li);
+    }
+    auxBox.appendChild(ul);
+  }
+  if (Array.isArray(candidates) && candidates.length > 0) {
+    auxHasContent = true;
+    auxBox.appendChild(el('h3', 'lib-block-title', '辅助来源 · 未定候选（未核验，未入库）'));
+    const ul = el('ul', 'lib-list');
+    for (const item of candidates) {
+      const li = el('li');
+      const head = el('p', 'lib-step-line');
+      head.appendChild(el('strong', null, `${item.title}（${item.status ?? '未核验，未入库'}）`));
+      li.appendChild(head);
+      if (item.reason) li.appendChild(el('p', 'lib-step-line', item.reason));
+      ul.appendChild(li);
+    }
+    auxBox.appendChild(ul);
+  }
+  if (auxHasContent) page.appendChild(auxBox);
+
+  // REV001：主方向页给广域图的相关支线预览 + 进入完整图（不把广域认知藏在课题内）。
+  const land = renderLibrary.landscape;
+  if (land && Array.isArray(land.nodes) && land.nodes.length > 0) {
+    const related = land.nodes.filter((n) => Array.isArray(n.topics) && n.topics.includes(direction.id)).slice(0, 6);
+    if (related.length > 0) {
+      const nodeById = new Map(land.nodes.map((n) => [n.id, n]));
+      const box = el('section', 'lib-block');
+      box.appendChild(el('h3', 'lib-block-title', '广域脉络中的相关支线（预览）'));
+      const ul = el('ul', 'lib-list');
+      for (const node of related) {
+        const li = el('li');
+        const head = el('p', 'lib-step-line');
+        head.appendChild(el('strong', null, `${node.title}（${node.when ?? ''}）`));
+        li.appendChild(head);
+        if (node.problem) li.appendChild(el('p', 'lib-step-line', node.problem));
+        const touching = (land.edges ?? []).filter((e) => e.from === node.id || e.to === node.id);
+        if (touching.length > 0) {
+          const others = touching
+            .map((e) => nodeById.get(e.from === node.id ? e.to : e.from))
+            .filter(Boolean)
+            .map((n) => n.title);
+          if (others.length > 0) li.appendChild(el('p', 'lib-res-meta', `前后关系：${others.join('、')}（完整图内查看）`));
+        }
+        ul.appendChild(li);
+      }
+      box.appendChild(ul);
+      const entry = el('p', 'lib-first-line');
+      entry.appendChild(link('#/map', '进入广域脉络图（看相关支线的完整位置与详解）', 'lib-btn'));
+      box.appendChild(entry);
+      page.appendChild(box);
+    }
+  }
+}
 
 function paperListItem(paper) {
   const item = el('section', 'lib-paper-item');
@@ -2796,9 +4560,13 @@ function renderPaper(container, paperId, ctx = {}) {
   const source = paperSourceLink(paper);
   article.appendChild(paperHeader(paper));
   if (ctxNotice) article.appendChild(el('p', 'lib-notice-flat', ctxNotice));
+  // C 包（R6 规则②）：本页被覆盖层示例条目影响时常驻示例横幅（从持久字段重建，随刷新/import 保留）。
+  renderCardGuidanceBanner(article, 'paper', paper.id);
 
   // 起步卡三问（03 §1）：覆盖短行之后、正文之前；旧卡无 learner 不渲染。
-  renderLearnerBlock(article, paper);
+  renderLearnerBlock(article, paper, 'paper');
+  // PLAN-010 阶段 D：三段式导读（仅首批深做卡携带 guidedReading；无依据自动降级为两段）。
+  renderGuidedReading(article, paper);
 
   if (depth === 'deep') {
     if (Array.isArray(paper.overview) && paper.overview.length > 0) {
@@ -2853,8 +4621,13 @@ function renderPaper(container, paperId, ctx = {}) {
     stringList(article, 'lib-sec-reasons', sectionTitle(depth, 'reasons'), paper.reasons);
   }
 
+  // PLAN-010 阶段 C：综述导学树（仅带 surveyTree 的综述卡渲染，节点带来源标注）。
+  renderSurveyTree(article, paper);
+
   // 章节动作（03 §2）：正文之后、记录面板之前。
   renderReadingActionsBlock(article, paper, `lib-sec-${paper.id}`);
+  // C 包（R4）：导学追加的自查问题如实出现在列表末尾，并带来源 meta 行；示例条目明标示例。
+  renderCardQuestionsMeta(article, 'paper', paper.id);
 
   // 旧 paper.next 降为延伸阅读（03 §5.3），与路线下一节点相同则去重。
   const routeNextKey = routeCtx?.next && !routeCtx.next.external ? nodeTargetKey(routeCtx.next.target) : null;
@@ -2935,6 +4708,8 @@ function renderMaterial(container, materialId, ctx = {}) {
   header.appendChild(meta);
   article.appendChild(header);
   if (ctxNotice) article.appendChild(el('p', 'lib-notice-flat', ctxNotice));
+  renderCardGuidanceBanner(article, 'material', material.id);
+  renderCardGuidanceBanner(article, 'material', material.id);
 
   const pending = material.availability === 'pending' || coverageMode === 'identity';
   if (pending) {
@@ -2943,7 +4718,7 @@ function renderMaterial(container, materialId, ctx = {}) {
       el('p', 'lib-notice-flat', `来源待核：${material.pendingReason ?? material.coverage?.limitations ?? '原因待补'}。此条保留序位，暂不作为可开始内容。`),
     );
   } else {
-    renderLearnerBlock(article, material);
+    renderLearnerBlock(article, material, 'material');
     renderReadingActionsBlock(article, material, `lib-sec-mat-${material.id}`, 'article');
     if (Array.isArray(material.body?.blocks) && material.body.blocks.length > 0) {
       article.appendChild(blockSection('正文', material.body.blocks, null));
@@ -2954,6 +4729,10 @@ function renderMaterial(container, materialId, ctx = {}) {
       box.appendChild(el('h3', 'lib-block-title', section.heading));
       renderBlocks(box, section.blocks);
       article.appendChild(box);
+    }
+    if (Array.isArray(material.questions) && material.questions.length > 0) {
+      // 材料一般没有 questions（白名单 append 对无此字段的材料按目标缺失拒绝）；数据若存在则如实渲染。
+      stringList(article, null, '自查问题', material.questions);
     }
     if (material.nextAction) article.appendChild(el('p', 'lib-intro', material.nextAction));
   }
@@ -3144,6 +4923,13 @@ function renderLearn(container, routeId = null, ctx = {}) {
       page.appendChild(p);
     }
     if (route.pendingNote) page.appendChild(el('p', 'lib-notice-flat', route.pendingNote));
+    // PLAN-010 阶段 E：featured 路线补「与当前研究能力的关系」块（映射到研究能力而非框架目录）。
+    if (typeof route.researchLink === 'string' && route.researchLink.trim() !== '') {
+      const capBox = el('div', 'lib-capmap');
+      capBox.appendChild(el('p', 'lib-capmap-title', '与当前研究能力的关系'));
+      capBox.appendChild(el('p', 'lib-para', route.researchLink));
+      page.appendChild(capBox);
+    }
     if (Array.isArray(route.relatedPaperIds) && route.relatedPaperIds.length > 0) {
       const p = el('p', 'lib-step-line');
       p.appendChild(el('strong', 'lib-step-label', '关联论文：'));
@@ -3502,9 +5288,184 @@ function renderFooterOnce() {
   footer.appendChild(details);
 }
 
+// ---------- DYNAMIC-GUIDANCE-009 / C 包：本机导学调整（#/guidance）与生效 meta 辅助 ----------
+// pending 提案仅存在于页面会话内存、不落盘（R2）：未经确认刷新/关闭＝整案丢弃，需重新粘贴。
+// 确认写入由 guidance.applyProposal 在 Web Locks 内重跑校验 ①–④ 后整份 JSON 一次写入；
+// 覆盖层读写不触碰 v3 键；损坏/不可用给明确文案并降级为基线显示（R5）。
+
+const guidanceUi = {
+  pending: [], // [{key, text, proposal, validation, snapshot, choices}]
+  notices: [], // 一次性提示（确认/撤销/导入等动作后随下一次渲染显示）
+  submitErrors: null, // 最近一次校验拒绝（①–③）：不出预览
+  importState: null, // {incoming, comparison}（导入冲突的显式决策中）
+  resetArmed: false, // 重置两步确认
+  corruptExported: false, // 坏档已导出后才允许强制重置
+  seq: 0,
+};
+
+function guidanceStorage() {
+  return typeof window !== 'undefined' && window.localStorage ? window.localStorage : null;
+}
+function guidanceNavigator() {
+  return typeof window !== 'undefined' ? window.navigator ?? null : null;
+}
+function pushGuidanceNotice(text) {
+  guidanceUi.notices.push(text);
+}
+
+// R4 meta：该对象被覆盖层新增/字段调整时的纯文本 meta 行（不加徽章、不靠颜色）。
+function adjustMetaFor(overlay, type, id, fields) {
+  if (!overlay?.entries) return null;
+  const lines = [];
+  const insertEntry = overlay.entries[`${type}:${id}:`];
+  if (insertEntry) lines.push(`${adjustLabel(insertEntry)} · 本对象为覆盖层新增（内容模块文件未改）`);
+  for (const f of fields) {
+    const entry = overlay.entries[`${type}:${id}:${f}`];
+    if (entry) lines.push(`字段「${FIELD_LABELS[f] ?? f}」：${adjustLabel(entry)}`);
+  }
+  return lines.length > 0 ? lines.join('；') : null;
+}
+
+function renderCardGuidanceBanner(article, type, id) {
+  const overlay = currentGuidanceOverlay();
+  if (!overlay?.entries) return;
+  const prefix = `${type}:${id}:`;
+  const entries = Object.entries(overlay.entries).filter(([ref]) => ref.startsWith(prefix));
+  if (entries.length === 0) return;
+  if (entries.some(([, entry]) => entry.example === true)) {
+    article.appendChild(el('p', 'lib-example-banner', `${EXAMPLE_BANNER_TEXT}：本页含示例导学调整，不是真实指导`));
+  }
+  article.appendChild(el('p', 'lib-adjust-meta', `本页有 ${entries.length} 处导学调整来自已确认提案（逐条注明；内容模块文件未被改写）。`));
+}
+
+function renderCardQuestionsMeta(article, type, id) {
+  const entry = overlayEntry(currentGuidanceOverlay(), `${type}:${id}:questions`);
+  if (!entry) return;
+  const count = Array.isArray(entry.value) ? entry.value.length : 0;
+  article.appendChild(
+    el('p', 'lib-adjust-meta', `自查问题末尾 ${count} 条为导学追加（见上「读完后自查」列表）：${adjustLabel(entry)}`),
+  );
+  if (entry.example === true) article.appendChild(el('p', 'lib-example-mark', EXAMPLE_BANNER_TEXT));
+}
+
+function guidanceDisplayValue(value) {
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value)) return value.map((v) => guidanceDisplayValue(v)).join('；');
+  if (value && typeof value === 'object') {
+    return Object.entries(value)
+      .map(([k, v]) => `${k}=${Array.isArray(v) ? v.join('；') : typeof v === 'object' && v ? JSON.stringify(v) : String(v ?? '')}`)
+      .join(' · ');
+  }
+  return String(value ?? '');
+}
+
+function submitProposalText(text) {
+  guidanceUi.submitErrors = null;
+  const validation = validateProposal(String(text ?? ''), renderBase, currentGuidanceOverlay());
+  if (validation.status === 'reject') {
+    guidanceUi.submitErrors = validation;
+    renderApp();
+    return;
+  }
+  guidanceUi.seq += 1;
+  guidanceUi.pending.push({
+    key: `pending-${guidanceUi.seq}`,
+    text: String(text ?? ''),
+    proposal: validation.proposal,
+    validation,
+    snapshot: Object.fromEntries(validation.items.map((it) => [it.ref, it.op === 'insert' ? '' : it.baseCurrent ?? ''])),
+    choices: {},
+  });
+  pushGuidanceNotice('已通过校验进入预览：确认前刷新/关闭即整案丢弃，不写入任何内容。');
+  renderApp();
+}
+
+async function confirmPendingProposal(pending) {
+  const items = pending.validation.items;
+  for (const it of items) {
+    if (!pending.choices[it.ref]) {
+      pushGuidanceNotice('确认前请为每一条显式选择「采纳此条」或「保持旧值」（两个都是显式动作）。');
+      renderApp();
+      return;
+    }
+  }
+  const accepted = {};
+  for (const it of items) if (pending.choices[it.ref] === 'accept') accepted[it.ref] = true;
+  const storage = guidanceStorage();
+  if (!storage) {
+    pushGuidanceNotice('本浏览器存储不可用，导学调整无法保存；页面按基线显示。');
+    renderApp();
+    return;
+  }
+  const result = await applyProposal({
+    storage,
+    navigatorLike: guidanceNavigator(),
+    base: renderBase,
+    proposalText: pending.text,
+    accepted,
+    previewSnapshot: pending.snapshot,
+    contentVersionLabel: typeof renderBase?.contentVersion === 'string' ? renderBase.contentVersion : null,
+  });
+  guidanceUi.pending = guidanceUi.pending.filter((p) => p.key !== pending.key);
+  if (result.ok) {
+    pushGuidanceNotice('已写入：导学覆盖层生效（首页/路线/论文/材料/地图经 computeEffective 单入口生效，重新打开仍有效）。本人笔记（v3）未被触碰。');
+  } else {
+    pushGuidanceNotice(result.message ?? '写入失败：覆盖层保持旧状态。');
+  }
+  renderApp();
+}
+
+function discardPendingProposal(pending) {
+  guidanceUi.pending = guidanceUi.pending.filter((p) => p.key !== pending.key);
+  pushGuidanceNotice(`提案 ${pending.proposal.id}：整案不采纳，未写入任何内容（关闭＝不采纳）。`);
+  renderApp();
+}
+
+function revalidatePendingProposal(pending) {
+  const validation = validateProposal(pending.text, renderBase, currentGuidanceOverlay());
+  guidanceUi.pending = guidanceUi.pending.filter((p) => p.key !== pending.key);
+  if (validation.status === 'reject') {
+    guidanceUi.submitErrors = validation;
+    pushGuidanceNotice('重新校验未通过：按当前生效态本提案已不可应用（例如目标已被移除），未写入。');
+  } else {
+    guidanceUi.pending.push({
+      key: pending.key,
+      text: pending.text,
+      proposal: validation.proposal,
+      validation,
+      snapshot: Object.fromEntries(validation.items.map((it) => [it.ref, it.op === 'insert' ? '' : it.baseCurrent ?? ''])),
+      choices: {},
+    });
+    pushGuidanceNotice('已按当前生效态重新生成预览（选择已重置）。');
+  }
+  renderApp();
+}
+
+async function undoLastGuidance() {
+  const storage = guidanceStorage();
+  if (!storage) return;
+  const result = await undoLastApply({ storage, navigatorLike: guidanceNavigator(), base: renderBase });
+  pushGuidanceNotice(result.ok ? '已撤销最近一次导学调整（覆盖层完整快照一次回退；本人笔记不受影响）。' : result.message ?? '撤销未执行。');
+  renderApp();
+}
+
+function downloadGuidanceFile(name, text, mime) {
+  const blob = new Blob([text], { type: `${mime};charset=utf-8` });
+  const url = URL.createObjectURL(blob);
+  const a = el('a', null, '');
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 function renderApp() {
   const container = document.getElementById('lib-view');
   if (!container) return;
+  // C 包：每轮渲染先经生效值单入口算出生效库（无覆盖层＝基线同一引用，不复制第二副本）。
+  renderLibrary = computeEffective(renderBase, currentGuidanceOverlay()).lib;
   const raw = window.location.hash;
   const parsed = parseHash(raw);
   container.textContent = '';
@@ -3521,6 +5482,12 @@ function renderApp() {
   switch (parsed.view) {
     case 'home':
       renderHome(container);
+      break;
+    case 'map':
+      renderMap(container);
+      break;
+    case 'guidance':
+      renderGuidance(container);
       break;
     case 'directions':
       renderDirections(container);

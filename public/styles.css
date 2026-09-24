@@ -144,8 +144,15 @@ body.lib ::selection { background: var(--lib-accent); color: #ffffff; }
 .lib-view h3.lib-zone-title,
 .lib-view h3.lib-firstuse-title { margin: 0; font-size: 17px; font-family: var(--lib-font-ui); }
 .lib-zone-entry { font-size: 13px; }
+/* PLAN-011 B1：purpose+howToUse 合并为一行（是什么 · 什么时候用）。 */
+.lib-zone-about { margin: 8px 0 0; font-size: 14px; line-height: 1.75; }
+.lib-zone-about-when { color: var(--lib-muted); font-size: 13px; }
 .lib-zone-purpose { margin: 8px 0 4px; font-size: 14px; line-height: 1.75; }
 .lib-zone-how { margin: 0; font-size: 13px; color: var(--lib-muted); line-height: 1.7; }
+/* PLAN-011 B2：课题页旧介绍折叠容器。 */
+.lib-route-legacy { margin: 4px 0 20px; }
+.lib-route-legacy > summary { cursor: pointer; font-size: 14px; color: var(--lib-muted); padding: 6px 0; }
+.lib-route-legacy-body { padding: 4px 0 8px 14px; border-left: 2px solid var(--lib-line); }
 .lib-zone-body { margin-top: 12px; display: flex; flex-direction: column; gap: 12px; }
 .lib-zone-item { padding-left: 12px; border-left: 2px solid var(--lib-line); }
 .lib-zone-item-title { margin: 0; font-size: 15px; font-weight: 600; }
@@ -512,4 +519,327 @@ body.lib ::selection { background: var(--lib-accent); color: #ffffff; }
 @media (max-width: 900px) {
   .lib-notes-form { flex-direction: column; }
   .lib-notes-form .lib-notes-input { width: 100%; }
+}
+
+/* ===== DYNAMIC-GUIDANCE-009 / B 包：首屏动线卡 + 领域地图（复用 lib 变量，不新增装饰图形/徽章/外字体） =====
+   设计口径：主区为「做什么／读什么／怎么读」的动线卡与地图阅读，其余区与次级入口下移不抢主动线；
+   关系语义、来源一律纯文本 meta 行（DESIGN：不靠颜色/徽章区分，语义靠文字）。 */
+
+/* 首屏动线卡：视觉上占据首屏主区，左侧强调线（非徽章），下移其余区。 */
+.lib-home-focus {
+  margin: 0 0 26px;
+  padding: 20px 22px;
+  border: 1px solid var(--lib-line);
+  border-left: 3px solid var(--lib-accent);
+  border-radius: 10px;
+  background: var(--lib-accent-soft);
+}
+.lib-home-focus-title { margin: 0 0 14px; font-family: var(--lib-font-ui); font-size: 19px; font-weight: 700; }
+.lib-focus-line { margin: 0 0 10px; font-family: var(--lib-font-read); font-size: 17px; line-height: 1.8; overflow-wrap: anywhere; }
+.lib-focus-label {
+  display: inline-block;
+  min-width: 5.5em;
+  margin-right: 8px;
+  font-family: var(--lib-font-ui);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--lib-accent-deep);
+  letter-spacing: 0.03em;
+}
+.lib-focus-prov,
+.lib-focus-scope { margin: 0 0 8px; font-family: var(--lib-font-ui); font-size: 13px; color: var(--lib-muted); line-height: 1.7; overflow-wrap: anywhere; }
+.lib-focus-scope { font-style: italic; }
+.lib-focus-actions { margin: 14px 0 0; display: flex; flex-wrap: wrap; gap: 10px; }
+.lib-home-secondary { margin: 0 0 6px; font-family: var(--lib-font-ui); font-size: 14px; color: var(--lib-muted); line-height: 1.9; }
+.lib-home-secondary .lib-focus-label { min-width: 0; }
+
+/* 领域地图：两侧文字节点 + 有据关系；两栏→窄屏堆叠，防横向溢出。 */
+.lib-map { max-width: 68rem; overflow-wrap: anywhere; }
+.lib-map-note {
+  margin: 0 0 10px;
+  padding: 9px 12px;
+  border-left: 2px solid var(--lib-line);
+  background: #f3f6f8;
+  font-family: var(--lib-font-ui);
+  font-size: 13px;
+  color: var(--lib-muted);
+  line-height: 1.7;
+}
+.lib-map-path { margin: 0 0 22px; font-family: var(--lib-font-ui); font-size: 14px; line-height: 1.8; }
+.lib-map-inline-label { font-weight: 700; color: var(--lib-accent-deep); margin-right: 6px; }
+.lib-map-sides { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 24px; align-items: start; }
+.lib-map-col-title {
+  margin: 0 0 12px;
+  font-family: var(--lib-font-ui);
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--lib-accent-deep);
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--lib-line);
+}
+.lib-map-node {
+  margin: 0 0 14px;
+  padding: 14px 16px;
+  border: 1px solid var(--lib-line);
+  border-radius: 10px;
+  background: var(--lib-surface);
+}
+.lib-map-node-method { border-top: 3px solid var(--lib-accent); }
+.lib-map-node-problem { border-top: 3px solid var(--lib-side-muted); }
+.lib-map-node-label { margin: 0 0 6px; font-family: var(--lib-font-ui); font-size: 16px; font-weight: 600; }
+.lib-map-node-summary { margin: 0 0 10px; font-family: var(--lib-font-read); font-size: 16px; line-height: 1.8; overflow-wrap: anywhere; }
+.lib-map-refs,
+.lib-map-evidence { margin: 0 0 6px; font-family: var(--lib-font-ui); font-size: 13px; line-height: 1.7; color: var(--lib-ink); overflow-wrap: anywhere; }
+.lib-view a.lib-map-ref { text-decoration: none; border-bottom: 1px solid var(--lib-line); }
+.lib-view a.lib-map-ref:hover { text-decoration: none; border-bottom-color: var(--lib-accent); }
+.lib-map-unresolved { color: var(--lib-muted); font-style: italic; }
+.lib-map-source { margin: 6px 0 0; font-family: var(--lib-font-ui); font-size: 12px; color: var(--lib-muted); line-height: 1.7; overflow-wrap: anywhere; }
+.lib-map-edges { display: flex; flex-direction: column; gap: 12px; }
+.lib-map-edge { padding: 12px 14px; border: 1px dashed var(--lib-line); border-radius: 8px; background: #f8fafb; }
+.lib-map-edge-head { margin: 0 0 6px; font-family: var(--lib-font-read); font-size: 16px; line-height: 1.8; overflow-wrap: anywhere; }
+/* 关系语义标签＝加粗强调文字，不做成 chip/徽章（DESIGN：语义靠文字，不靠颜色/形状区分）。 */
+.lib-map-edge-word { font-family: var(--lib-font-ui); font-size: 15px; font-weight: 700; color: var(--lib-accent-deep); margin-right: 6px; }
+.lib-map-edge-ends { margin: 0 0 6px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px; }
+.lib-map-jump {
+  font-family: var(--lib-font-ui);
+  font-size: 13px;
+  color: var(--lib-accent-deep);
+  background: transparent;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  overflow-wrap: anywhere;
+}
+.lib-map-jump:hover { color: var(--lib-accent); }
+.lib-map-jump:focus-visible { outline: 2px solid var(--lib-accent); outline-offset: 2px; }
+.lib-map-arrow { color: var(--lib-muted); }
+.lib-map-foot { margin-top: 20px; font-family: var(--lib-font-ui); font-size: 13px; color: var(--lib-muted); line-height: 1.7; }
+
+@media (max-width: 1199px) {
+  .lib-map-sides { gap: 20px; }
+}
+@media (max-width: 900px) {
+  .lib-map-sides { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 480px) {
+  .lib-home-focus { padding: 16px 14px; }
+  .lib-focus-label { min-width: 0; }
+  .lib-map-node,
+  .lib-map-edge { padding: 12px; }
+}
+
+/* ---------- DYNAMIC-GUIDANCE-009 / C 包：导学调整（提案闭环）---------- */
+/* R2：示例常驻「黄字」横幅；R4：生效来源行是纯文本 meta，不加徽章、不靠颜色区分层级。 */
+.lib-example-banner {
+  margin: 0 0 14px;
+  padding: 8px 12px;
+  border: 1px solid #c9a227;
+  background: #fff8dd;
+  color: #6b5300;
+  font-family: var(--lib-font-ui);
+  font-size: 14px;
+  line-height: 1.7;
+}
+.lib-adjust-meta,
+.lib-example-mark {
+  margin: 4px 0 0;
+  color: var(--lib-muted);
+  font-family: var(--lib-font-ui);
+  font-size: 13px;
+  line-height: 1.7;
+}
+.lib-pending-banner {
+  margin: 10px 0 0;
+  padding: 8px 12px;
+  border: 1px solid var(--lib-line);
+  background: var(--lib-accent-soft);
+  font-family: var(--lib-font-ui);
+  font-size: 14px;
+}
+.lib-guidance-block {
+  margin: 0 0 22px;
+  padding: 14px 16px;
+  border: 1px dashed var(--lib-line);
+  background: var(--lib-surface);
+}
+.lib-guidance-textarea {
+  display: block;
+  width: 100%;
+  min-height: 120px;
+  margin: 8px 0;
+  padding: 8px 10px;
+  border: 1px solid var(--lib-line);
+  font-family: var(--lib-font-mono);
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--lib-ink);
+  background: #fff;
+}
+.lib-guidance-file {
+  margin: 6px 0;
+  font-family: var(--lib-font-ui);
+  font-size: 13px;
+}
+.lib-preview-item {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--lib-line);
+  list-style: none;
+}
+.lib-preview-target {
+  margin: 0 0 6px;
+  font-family: var(--lib-font-ui);
+  font-size: 14px;
+  font-weight: 600;
+}
+.lib-preview-diff {
+  margin: 0 0 8px;
+}
+.lib-preview-diff dt {
+  font-family: var(--lib-font-ui);
+  font-size: 12px;
+  color: var(--lib-muted);
+}
+.lib-preview-diff dd {
+  margin: 0 0 6px;
+  font-family: var(--lib-font-ui);
+  font-size: 14px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+.lib-preview-choice {
+  margin: 0;
+}
+.lib-btn.lib-choice-on {
+  outline: 2px solid var(--lib-accent);
+}
+.lib-import-diff {
+  margin-top: 10px;
+}
+.lib-baseline-value {
+  font-family: var(--lib-font-mono);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+/* ---------- PLAN-010 内容展示深化（2026-09-24）：导学树 / 三段式导读 / 四轴 / 时间线 / 能力映射 ---------- */
+.lib-zone-sub { margin-top: 14px; padding-top: 10px; border-top: 1px dashed var(--lib-line); }
+.lib-zone-sub .lib-first-line { margin: 6px 0 0; font-size: 14px; line-height: 1.75; }
+.lib-zone-sub .lib-zone-item { margin-top: 8px; }
+
+.lib-guided { padding: 14px 16px; border: 1px solid var(--lib-line); background: #fbfcfd; }
+.lib-guided-terms { margin: 0 0 12px; display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; font-family: var(--lib-font-ui); font-size: 14px; }
+.lib-guided-terms dt { font-weight: 600; color: var(--lib-ink); }
+.lib-guided-terms dd { margin: 0; color: var(--lib-muted); line-height: 1.75; }
+.lib-guided-explain { margin-top: 10px; }
+
+.lib-tree { padding: 14px 16px; border: 1px solid var(--lib-line); }
+.lib-tree > .lib-tree-node { margin-top: 8px; }
+.lib-tree-node { margin: 6px 0 0 0; padding-left: 14px; border-left: 1px solid var(--lib-line); }
+.lib-tree-node .lib-tree-node { margin-top: 6px; }
+.lib-tree-summary { cursor: pointer; list-style: none; display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; font-family: var(--lib-font-ui); font-size: 14px; }
+.lib-tree-summary::-webkit-details-marker { display: none; }
+.lib-tree-summary::before { content: "▸ "; color: var(--lib-accent-deep); }
+.lib-tree-node[open] > .lib-tree-summary::before { content: "▾ "; }
+.lib-tree-title { font-weight: 600; }
+.lib-tree-source { font-size: 12px; color: var(--lib-muted); }
+.lib-tree-body { margin: 6px 0 10px; }
+.lib-tree-body .lib-para { font-size: 15px; margin: 0 0 8px; }
+
+.lib-axis-list { margin: 0; font-family: var(--lib-font-ui); }
+.lib-axis-list dt { margin-top: 14px; font-size: 15px; font-weight: 600; }
+.lib-axis-list dd { margin: 0 0 0 0; }
+.lib-axis-list .lib-step-line { margin: 4px 0 0; font-size: 14px; line-height: 1.75; }
+
+.lib-timeline { list-style: none; margin: 12px 0 0; padding: 0; }
+.lib-timeline-item { position: relative; padding: 0 0 16px 58px; }
+.lib-timeline-item::before {
+  content: "";
+  position: absolute;
+  left: 38px;
+  top: 6px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--lib-accent-deep);
+}
+.lib-timeline-item::after {
+  content: "";
+  position: absolute;
+  left: 41px;
+  top: 16px;
+  bottom: 0;
+  width: 1px;
+  background: var(--lib-line);
+}
+.lib-timeline-item:last-child::after { content: none; }
+.lib-timeline-head { margin: 0; font-size: 14px; }
+.lib-timeline-when { display: inline-block; min-width: 46px; margin-right: 8px; font-family: var(--lib-font-mono); font-size: 12px; color: var(--lib-muted); }
+
+.lib-capmap { margin: 14px 0 0; padding: 12px 16px; border-left: 3px solid var(--lib-accent); background: #f2f8f6; }
+.lib-capmap-title { margin: 0 0 6px; font-family: var(--lib-font-ui); font-size: 13px; font-weight: 600; letter-spacing: 0.04em; color: var(--lib-accent-deep); }
+.lib-capmap .lib-para { margin: 0; font-size: 15px; }
+
+@media (max-width: 900px) {
+  .lib-guided-terms { grid-template-columns: 1fr; }
+  .lib-guided-terms dt { margin-top: 6px; }
+  .lib-timeline-item { padding-left: 48px; }
+  .lib-timeline-item::before { left: 30px; }
+  .lib-timeline-item::after { left: 33px; }
+}
+
+/* ---------- PLAN REV001：广域认知脉络图（图文同数据；SVG 桌面主视图，窄屏层级文本优先） ---------- */
+.lib-land { margin: 0 0 24px; }
+.lib-land-svg { display: block; width: 100%; max-width: 860px; height: auto; margin: 10px 0 6px; background: #fbfcfd; border: 1px solid var(--lib-line); }
+.lib-land-edge { stroke-width: 1.4; }
+.lib-land-edge-academic { stroke: #2859a6; }
+.lib-land-edge-reading { stroke: #b07a13; stroke-dasharray: 5 4; }
+.lib-land-node { cursor: pointer; outline: none; }
+.lib-land-node:focus-visible .lib-land-dot { stroke: var(--lib-accent-deep); stroke-width: 3; }
+.lib-land-dot { fill: #e8f2ef; stroke: var(--lib-accent-deep); stroke-width: 1.6; }
+.lib-land-node:hover .lib-land-dot { fill: #d2e8e1; }
+.lib-land-label { font-family: var(--lib-font-ui); font-size: 11px; fill: var(--lib-ink); }
+.lib-land-layers { margin: 10px 0 0; }
+.lib-land-layer { margin: 8px 0 0; padding-left: 12px; border-left: 2px solid var(--lib-line); }
+.lib-land-layer-summary { cursor: pointer; font-family: var(--lib-font-ui); font-size: 14px; line-height: 1.7; }
+.lib-land-layer-summary::-webkit-details-marker { display: none; }
+.lib-land-layer-summary::before { content: "▾ "; color: var(--lib-accent-deep); }
+.lib-land-layer:not([open]) > .lib-land-layer-summary::before { content: "▸ "; }
+.lib-land-layer-body { margin: 6px 0 10px; display: flex; flex-direction: column; gap: 4px; }
+.lib-land-item {
+  border: 0; background: none; cursor: pointer; padding: 4px 8px; text-align: left;
+  font-family: var(--lib-font-ui); font-size: 13px; line-height: 1.65; color: var(--lib-ink);
+  border-left: 2px solid transparent;
+}
+.lib-land-item:hover { color: var(--lib-accent-deep); }
+.lib-land-item-active { border-left-color: var(--lib-accent-deep); background: #f2f8f6; }
+.lib-land-path { margin: 10px 0 0; padding: 8px 12px; border: 1px solid var(--lib-line); }
+.lib-land-path-title { margin: 0 0 4px; font-family: var(--lib-font-ui); font-size: 14px; font-weight: 600; }
+.lib-land-chain { border: 0; background: none; cursor: pointer; padding: 0; font-size: 13px; color: var(--lib-accent); font-family: var(--lib-font-ui); }
+.lib-land-chain:hover { text-decoration: underline; }
+.lib-land-detailbox { margin: 16px 0 0; padding: 14px 16px; border: 1px solid var(--lib-line); background: #fbfcfd; }
+.lib-land-detail-title { margin: 0 0 4px; font-family: var(--lib-font-ui); font-size: 16px; }
+.lib-land-fields { margin: 8px 0 0; display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; font-family: var(--lib-font-ui); font-size: 14px; }
+.lib-land-fields dt { font-weight: 600; color: var(--lib-muted); }
+.lib-land-fields dd { margin: 0; line-height: 1.75; }
+.lib-land-detail-sub { margin: 12px 0 4px; font-family: var(--lib-font-ui); font-size: 13px; font-weight: 600; color: var(--lib-muted); }
+/* PLAN-011 B3：节点连贯讲解优先展示；六字段速览折叠退居其次。 */
+.lib-land-guide { margin: 8px 0 0; }
+.lib-land-guide-part { margin: 0 0 8px; font-size: 14px; line-height: 1.85; }
+.lib-land-source-brief { margin: 0 0 4px; padding-top: 6px; border-top: 1px dashed var(--lib-line); font-size: 12px; color: var(--lib-muted); line-height: 1.7; }
+.lib-land-fields-wrap { margin-top: 10px; }
+.lib-land-fields-wrap > summary { cursor: pointer; font-size: 13px; color: var(--lib-muted); padding: 4px 0; }
+
+@media (max-width: 900px) {
+  /* 窄屏：层级文本优先，SVG 隐藏（数据同源，不丢信息）。 */
+  .lib-land-svg { display: none; }
+}
+
+/* 独立审查修复：图与详解并列（桌面），详解在路径之前；窄屏上下排。 */
+.lib-land-main { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 20px; align-items: start; }
+.lib-land-svgwrap { min-width: 0; }
+@media (max-width: 900px) {
+  .lib-land-main { grid-template-columns: minmax(0, 1fr); }
 }

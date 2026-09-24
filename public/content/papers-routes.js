@@ -20,7 +20,7 @@ export const ROUTE_PAPERS = [
       templateVersion: 1,
       coverage: {
         mode: 'partial-text',
-        basis: 'external_parser（pdftotext）抽取的 PDF 全文文本',
+        basis: 'external_parser（pdftotext）抽取的 PDF 全文文本；2026-09-23（009-A）未重读全文（PDF 抓取格式不支持、ACM 页拒绝直连），本轮只核对了卡内 §3 级散文表述与导读/路线文案的一致性；checkedAt 保留 2026-09-15 制作核查日，未刷新。',
         version: 'ACM TOSEM Vol. 34, No. 3, Article 57, 2025 年 2 月（DOI 10.1145/3702971）',
         sections: ['摘要', '§1', '§3（3.1–3.9，RQ1–RQ4）', '§4', '§6', '§7'],
         limitations:

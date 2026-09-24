@@ -16,6 +16,8 @@ export const TECHNICAL_ROUTES = [
       capability: '做一个受控 Agent，再让两个角色围绕同一任务交流、复核并停止；进而看懂跨工具时哪些状态不能自然共享。',
       prerequisites: '能运行 Python，理解函数/列表/字典与异常。不涉及训练、部署或 K8s；不要求先学完 T1–T6。',
       applicability: '当前主技术栈；服务主方向（跨工具协作）的机制理解。练习是教学例子，不是跨 harness 实验。',
+      // PLAN-010 阶段 E：与当前研究能力的关系（映射到研究能力而非框架目录）。
+      researchLink: '学这条是为了支撑主方向的协作机制阅读与实验判断：亲手跑通过「双 Agent 复核回路」（ma-u3）和「中断-恢复」（ma-u2），Beyond Frameworks 的治理/交互维度、Do Not Restart 的副本补全与准入、Handoff Tax 的交接协议才不是抽象名词；ma-u4 的「同运行时共享状态 ≠ 跨 harness 互通」直接对应方向页的限制条款。',
       summary: 'Python + LangGraph 四个连续单元，共用一个「小型算术任务助手」贯通练习（mock 模式不需要密钥）。',
       pendingNote: '',
       relatedPaperIds: ['beyond-frameworks'],
@@ -144,6 +146,8 @@ export const TECHNICAL_ROUTES = [
       capability: '知道节点/边/邻居与列表表达的差别，建立 GNN 的直觉；不要求训练或推公式。',
       prerequisites: '无特别先修；Python 列表/字典即可。',
       applicability: '浅尝：不是第三条论文方向。主方向用不用图都可以，先会看图数据结构。',
+      // PLAN-010 阶段 E：与当前研究能力的关系。
+      researchLink: '学这条只是为了看懂图相关的表示选择：Routed Graph Handoff 的类型化依赖图（8 节点/7 边）是「表示层结构化到极致」的例子，graph-u1/u2 的节点/邻居/聚合直觉足够读懂它的机制与 structure-flexibility 权衡；不训练、不推公式，当前也无意把图引入主方向的方案。',
       summary: 'NetworkX 数据结构入门 + Distill GNN 图示直觉 + 一段站内编辑说明。',
       pendingNote: '',
       relatedPaperIds: [],
@@ -514,6 +518,8 @@ export const TECHNICAL_ROUTES = [
       capability: '区分“检索到相关内容”和“足以回答”，知道检索链路每一层丢掉了什么。',
       prerequisites: '具体先修：Python 文件读写、API 调用常识、列表/字典。缺哪项回 T1/T2 对应单元补，不强迫绕完整 T 系列。',
       applicability: '当主方向要按需取回历史、与原始轨迹/文档/状态作对照时再学；任何需要外部知识的系统也用得上。',
+      // PLAN-010 阶段 E：与当前研究能力的关系。
+      researchLink: '学这条是为了支撑主方向的检索基线判断：MemGPT 的记忆读回、Compression Cost 的 re-query 再获取、Handoff Debt 的「笔记 vs 原始轨迹」都假设你能分清「检索到相关内容」和「足以回答」；t4-u3 的引文与充分性单元正是这套判断的最小练习。判断不了检索质量，就读不懂「表示有损」的账记在哪里。',
       summary: '从载入切分→召回重排→引文与充分性的最小文档问答管道（LlamaIndex starter 为主教程）。',
       pendingNote: '',
       relatedPaperIds: ['memgpt'],

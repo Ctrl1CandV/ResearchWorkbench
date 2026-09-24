@@ -35,6 +35,101 @@ export const DIRECTIONS = [
       { label: 'Handoff Tax', url: 'https://arxiv.org/abs/2608.24358', note: '异构模型换手观察' },
       { label: 'Handoff Debt', url: 'https://arxiv.org/abs/2606.02875', note: '交接视图与重新发现成本' },
     ],
+    // ---------- PLAN-010 阶段 C：课题页深化块（仅主方向；2026-09-24） ----------
+    // 四轴是用户讨论的编辑分析框架，不是综述公认分类、不是论文事实；综述学术分类按
+    // survey-mem-tois / survey-comms-fcs 的已核章节结构呈现（见两张综述卡的导学树），两者分列不混同。
+    // PLAN-011：实例行只保留文献名与机制要点，节号与核查状态留在各卡的「来源与覆盖」里。
+    axisAnalysis: {
+      note: '四轴来自用户讨论的编辑分析框架：它把「哪种机制/表示组合更合适」拆成四个可分别作答的问题。它不是任何综述的公认分类，也不是论文事实；每轴给出的论文实例是站内已核条目，标「未定候选」的是证据尚不足以下结论的开放侧。',
+      axes: [
+        {
+          id: 'axis-where',
+          title: '状态保存在哪里',
+          explain: '协作状态落在何处：文本在窗口内/外部库、参数级记忆、图式状态，还是冻结的合约。位置决定可检查性、可恢复性与谁够得着它。',
+          examples: [
+            { ref: 'memgpt', text: '主/外部上下文分层：文本记忆存外部存储，经函数调用读回。' },
+            { ref: 'handoff-debt', text: '仓库现场＋四种交接视图：状态冻结在中断点的仓库。' },
+            { ref: 'do-not-restart', text: '残差合约：冻结的不是物而是「什么固定了、什么还开着」的义务账。' },
+          ],
+          unknown: '图式状态（Routed Graph Handoff 的类型化依赖图）只有单篇预印本级证据，跨 harness 可恢复性未定。',
+        },
+        {
+          id: 'axis-who',
+          title: '谁决定传/取什么',
+          explain: '传取的发起者与时机：发送方在交接时打包、接收方在运行中补取、环境侧准入，或自动路由器按任务取值。',
+          examples: [
+            { ref: 'handoff-tax', text: '发送方/接收方谁做压缩是独立变量（Compact_pre vs Compact_suf）——但两者都是交接时刻注入，不是运行时主动获取。' },
+            { ref: 'compression-cost', text: '接收方运行时补取的现成机制：re-query 循环把丢掉的状态买回来。' },
+            { ref: 'do-not-restart', text: '环境侧门禁：整图对照合约后准入，确定性而非 LLM 自主。' },
+            { ref: 'routed-graph-handoff', text: '自动路由：约 155 token 按任务在图/NL 间选格式，缺能力时保守回退 NL。' },
+          ],
+          unknown: '「发送方交接 vs 接收方获取」作为一对轴，接收方主动获取一侧目前只有 Compression Cost 一篇预印本级证据，不足以定稿。',
+        },
+        {
+          id: 'axis-what',
+          title: '保存什么语义',
+          explain: '内容的语义分层：事实证据 vs 前任判断、不变量 vs 违规模式、显式（NL/代码/结构化）vs 隐式（行为/环境信号）。语义混传是错误传播的通道。',
+          examples: [
+            { ref: 'memcollab', text: 'enforce（推理不变量）与 avoid（违规模式）二分，带模型身份标签、双门控检索。' },
+            { ref: 'handoff-debt', text: '四视图是语义保真度不同的显式内容：仓库工件是证据，笔记含前任判断。' },
+            { ref: 'survey-comms-fcs', text: '显式 vs 隐式内容之分：仅仓库视图接近「隐式＋环境信号」。' },
+          ],
+          unknown: 'raw 轨迹含错误路径的风险只有站内导读口径与 Tax 的方向依赖旁证，缺直接对照实验。',
+        },
+        {
+          id: 'axis-how',
+          title: '如何获取及计费',
+          explain: '读回/检索的机制与成本口径：再获取回路、初始一次性输入、运行中累计计费、事件数——各记各的账，不互换。',
+          examples: [
+            { ref: 'handoff-debt', text: '初始长度（字符口径）与累计 prompt token 分列；事件数与 token 不可互换。' },
+            { ref: 'compression-cost', text: '运行中再获取：恢复 D-state 消掉约一半检索成本——读回次数是计费一等公民。' },
+            { ref: 'memgpt', text: '读回由策略发起、每次函数调用都计费：「存下来 ≠ 免费拿到」。' },
+          ],
+          unknown: '异构 tokenizer 与不可见工具轨迹下的严格可比性，方向页已登记为限制，暂无已核缓解证据。',
+        },
+      ],
+    },
+    mechVsRep: {
+      intro: '机制与表示是两个别混的层次：机制回答「用什么方式协作」，表示回答「具体传什么」。站内分层归位：Tax/Debt 动的是表示（固定机制换表示），Do Not Restart 动的是机制（合约门禁 vs 自由接续），MemGPT 是机制+表示的组合样本。',
+      table: {
+        columns: ['层', '回答的问题', '贯穿例子（A 改到一半交给 B）', '站内已核实例'],
+        rows: [
+          ['机制', '用什么方式协作', '仓库工件+摘要 / 记忆+检索 / 合约式接续', 'Beyond Frameworks 四维、Do Not Restart CFRC、MemGPT 控制流'],
+          ['表示', '具体传什么信息', '摘要 / 原始轨迹 / 结构化笔记 / 依赖图', 'Tax 四条件、Debt 四视图、Routed Graph Handoff 图 vs NL'],
+          ['传输', '怎么把信息搬过去', '文件 / Git / 协议', '站内不比这层；传输实现是工程问题'],
+        ],
+      },
+      reading: '对照读法：同一机制换表示（Tax 已做）是已核证据；同一表示换机制（合约门禁 vs 自由接续）站内还没有对照实验，是开放问题。',
+    },
+    problemEvolution: {
+      note: '按论文公开时间排列（arXiv 首版日期），节点挂站内论文；它是编辑整理的问题线索，不是综述结论。',
+      nodes: [
+        { when: '2023-10', paperId: 'memgpt', text: '单 Agent 的上下文管理：把窗口当工作内存、外部存储当磁盘——「记忆」机制直觉的起点，但只管一个 Agent。' },
+        { when: '2024-04', paperId: 'survey-mem-tois', text: '记忆侧综述定型：来源/形式/操作/评测四问框架（TOIS 2025）；并在写作时点记录记忆基准缺口（须带时点限定）。' },
+        { when: '2025-02', paperId: 'survey-comms-fcs', text: '协作侧通信框架：系统级（架构/目标/协议）× 内部（策略/范式/对象/内容）；「内容」维接到表示层。' },
+        { when: '2025-05', paperId: 'beyond-frameworks', text: '协作拆维：治理/参与/交互/历史管理四维 + TAR 同杆秤——「机制组合比较」有了可点名的词汇。' },
+        { when: '2026-03', paperId: 'memcollab', text: '跨模型记忆：朴素共享有害（52.2→50.6），表示与模型耦合本身就是税——问题从单任务交接扩到跨模型共享。' },
+        { when: '2026-06', paperId: 'handoff-debt', text: '中断接管切片：四视图 + 分账度量，「重新发现成本」成为可度量对象。' },
+        { when: '2026-08', paperId: 'handoff-tax', text: '方向条件化：同一界面随升配/降配反转——「哪种表示好」被改写为「什么条件下哪种好」。' },
+        { when: '2026-08', paperId: 'routed-graph-handoff', text: '按任务路由表示：图 vs NL 自动选择；选择器缺能力（保守回退）与缺信息（oracle 余量 8.6pp）两面现形。' },
+        { when: '2026-08', paperId: 'compression-cost', text: '完成率之外的账：压缩的交互成本在运行中通过 re-query 兑现——计费轴的机制证据。' },
+        { when: '2026-09', paperId: 'do-not-restart', text: '从表示到义务：残差合约 + 整图准入——「状态保存在哪里」的合约级答案，验证时机的证据。' },
+      ],
+    },
+    paperLinks: [
+      { from: 'handoff-tax', to: 'handoff-debt', note: '同用软件修复任务的两个切片：能力不对称协作 vs 中断接管；分账度量纪律两篇互补。', source: '编辑整理的对照（非论文引用）；依据见两张卡的「来源与覆盖」。' },
+      { from: 'compression-cost', to: 'handoff-tax', note: 'Tax 记交接时的一次性账，Compression Cost 记交接后运行中的再获取账；「完成率不变的压缩可能很贵」支持对 Tax 质量/成本分列的谨慎解读。', source: '编辑整理的对照（非论文引用）；依据见两张卡的「来源与覆盖」。' },
+      { from: 'compression-cost', to: 'handoff-debt', note: 'R-state 不可恢复正是 Traj-drop「丢掉的回不来了」的负面对照。', source: '编辑整理的对照（非论文引用）；依据见两张卡的「来源与覆盖」。' },
+      { from: 'do-not-restart', to: 'handoff-tax', note: '把「方向×界面」骨架推进到「状态义务」维度：冻结合约 vs 冻结仓库现场。', source: '编辑整理的对照（非论文引用）；依据见两张卡的「来源与覆盖」。' },
+      { from: 'memcollab', to: 'memgpt', note: '跨模型缺口对照：MemGPT 管单 Agent 窗内外搬运，MemCollab 问存下来的东西给另一个模型用会怎样。', source: '编辑整理的对照（非论文引用）；依据见两张卡的「来源与覆盖」。' },
+      { from: 'routed-graph-handoff', to: 'handoff-tax', note: '把 Tax 的静态四条件升级为按任务路由的现成实例。', source: '编辑整理的对照（非论文引用）；依据见两张卡的「来源与覆盖」。' },
+      { from: 'survey-comms-fcs', to: 'beyond-frameworks', note: '两篇综述分工：Beyond Frameworks 管协作内部分析维度，survey-comms-fcs 管通信内容分类；「内容」维接到表示层。', source: '编辑整理的对照（非论文引用）；依据见两张综述卡的导学树。' },
+    ],
+    undecidedCandidates: [
+      { title: 'Memory in the Age of AI Agents（arXiv:2512.13564，预印本）', reason: '词汇更新候选（factual/experiential/working；形态×功能×动态）：2026-09-24 审计证据仅目录级且预印本未正式发表，不入选首批；补读其原文相关章节并确认与已核框架兼容前，不进入任何导读文案。', status: '未核验，未入库' },
+      { title: 'Grounding Agent Memory 同名两篇（arXiv:2609.11060 / arXiv:2601.10702）', reason: '两组同名论文需先消歧；(b) 的 ACL 2026 自注未经 Anthology 官方复核；两篇均仅摘要级，摘要级不进节级导读。', status: '未核验，未入库' },
+      { title: 'Multi-Agent Collaboration Mechanisms: A Survey of LLMs（arXiv:2501.06322）等三篇综述备选', reason: '已核查的综述备选：均为预印本、框架与已选两篇重叠且更粗，按「少而准」不入选；后续如需可另轮核验。', status: '已核查，未入选' },
+    ],
     archiveLabel: '按需查阅（不必接着读）',
     trackClosing:
       '选一个你仍不明白的比较问题，回看对应论文的设置；想动手时，再按需进入多智能体技术路线。练习自愿，研究实验另议。',
@@ -58,7 +153,7 @@ export const DIRECTIONS = [
         required: '必读',
         passMode: 'map',
         purpose: '把「协作」拆成治理、参与、交互与历史管理四个维度，避免把框架名当协作机制。',
-        readWhen: '导读之后立刻读：用它给后面的记忆与换手论文定位。',
+        readWhen: '导读之后立刻读：维度定义在 §3.2–3.5，先建「instructor/分散治理、I1–I4 交互模式、C1 上一轮完整日志」这些词，再拿它们给后面的记忆与换手论文定位。',
         check: '能提出一个协作维度，并说明它改变什么、不预设其普遍最佳取值。',
       },
       {
@@ -69,7 +164,7 @@ export const DIRECTIONS = [
         required: '必读',
         passMode: 'map',
         purpose: '建立「存下来的信息不会自动进入下一轮输入」的机制直觉，为记忆这一候选机制打底。',
-        readWhen: '有了维度词汇之后读它，把记忆放进机制地图。',
+        readWhen: '有了维度词汇之后读它，把记忆放进机制地图；重点看 §2.1–2.4 的主上下文/外部存储/函数调用控制流。',
         check: '能区分记忆库、检索/管理策略和这一轮上下文三样东西。',
       },
       {
@@ -196,15 +291,15 @@ export const DIRECTIONS = [
         stage: '看评价与反例',
         required: '必读',
         passMode: 'map',
-        purpose: '只建立评价定义：真实 issue + 失败转通过 / 通过须保持的测试；主方向两篇换手论文都用同类软件任务做实验。',
-        readWhen: '本线最后一篇：读懂台子的判据即可，不读榜。',
-        check: '能复述任务从哪来（issue-PR 对）与两类测试各防哪种误判。',
+        purpose: '只建立评价定义的入口：任务取自真实 GitHub issue 及对应 PR（摘要可证）；「修没修好」以什么可执行判据定夺是台子的核心设计，属正文、本卡摘要级未证。主方向两篇换手论文都用同类软件任务做实验。',
+        readWhen: '本线最后一篇：读懂台子的判据即可，不读榜；判据细节以取正文为准。',
+        check: '能说出任务从哪来（issue-PR 对、12 个 Python 仓库，摘要可证），并列出判定机制里要在正文核对的问题（用哪些测试、各防哪种误判）。',
       },
     ],
     archiveRoute: [
       { id: 'archive-code-1', kind: 'paper', paperId: 'tosem2025-acceptance', stage: '建立问题', required: '必读', purpose: '建立“测试通过不等于修复正确”的实证基础，理解验证预算为什么是独立的研究变量。', readWhen: '方向一第一篇：后续关于验收标准与补丁评估的文献都建立在这篇的问题定义之上。', check: '能复述 patch 与 fix 之别、RQ1 与 RQ4 的关键数字及其设置，并说出作者在 §7 建议的三条出路。' },
       { id: 'archive-code-2', kind: 'paper', paperId: 'le2018-overfitting', stage: '建立问题', required: '必读', purpose: 'TOSEM 在 RQ4 里复核的对象就是它：这篇用 held-out 测试估计语义类修复工具的过拟合程度。', readWhen: '第二篇，紧接 TOSEM；带着 RQ4 的疑问核对它的原始结论。', check: '能说出它与 TOSEM 在“如何判定过拟合”上的方法差异（held-out 测试 vs 契约加缺陷查找复核）。' },
-      { id: 'archive-code-3', kind: 'paper', paperId: 'swe-bench', stage: '建立问题', required: '必读', purpose: '理解“修复正确”在现代代码智能体语境下的评价定义：真实 issue + 失败转通过、通过保通过两类测试。', readWhen: '第三篇；传统 APR 的过拟合问题之后，看这个评价台如何把“修没修好”落到可执行的判据上。', check: '能复述任务构造（issue-PR 对）与两类测试各自防止的误判；当前只有摘要级判断。' },
+      { id: 'archive-code-3', kind: 'paper', paperId: 'swe-bench', stage: '建立问题', required: '必读', purpose: '理解“修复正确”在现代代码智能体语境下的评价定义：任务取自真实 issue 及对应 PR，判定靠运行测试（两类测试的说法待核正文）。', readWhen: '第三篇；传统 APR 的过拟合问题之后，看这个评价台如何把“修没修好”落到可执行的判据上。', check: '能复述任务构造（issue-PR 对）；两类测试各防哪种误判属于正文细节，取全文时核对，当前只有摘要级判断。' },
       { id: 'archive-code-4', kind: 'paper', paperId: 'ye2021-assessment', stage: '看评价与反例', required: '必读', purpose: '看补丁评估如何规模化（TOSEM 参考条目 [58]），对照“小基准细复核”与“大规模统计评估”两条路线。', readWhen: '第四篇；在理解验收问题之后再看规模化评估。', check: '读完后能概述其评估信号与规模化思路，并与 TOSEM 的契约复核标准对照。' },
       { id: 'archive-code-5', kind: 'paper', paperId: 'agentless', stage: '看评价与反例', required: '必读', purpose: '最重要的对照：不用 agent 循环的三阶段流水线逼近复杂 agent——脚手架的边际收益必须先自证。', readWhen: '第五篇；在看过两种评估路线后，用它重置对“复杂方法”的预期。', check: '能说出三阶段流程与作者对基准条目的人工分类结论（当前只有摘要级判断）。' },
       { id: 'archive-code-6', kind: 'paper', paperId: 'appt', stage: '理解方法', required: '选读', purpose: '了解基于预训练语言模型加序列模型的补丁分类方案（作者仓库说明），作为“学习型验收器”的近期参照。', readWhen: '第六篇；在掌握验收问题与评估路线后看学习型方案。', check: '能说出其输入输出（补丁到是否正确的分类）与所用组件（预训练语言模型加序列模型），并在仓库核对论文信息。' },

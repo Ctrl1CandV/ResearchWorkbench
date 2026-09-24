@@ -29,6 +29,7 @@ const SENTINELS = {
   'learning/multiagent-lab.md': '# sentinel lab',
   'content/briefs.js': '// sentinel-content-briefs',
   'notes.js': '// sentinel-notes',
+  'guidance.js': '// sentinel-guidance',
 };
 
 const testRoot = await fsp.mkdtemp(path.join(os.tmpdir(), 'rw-server-test-'));
@@ -100,7 +101,7 @@ test('GET / 返回 index 哨兵，内容类型 text/html', async () => {
   assert.ok(res.headers['content-type'].startsWith('text/html'));
 });
 
-test('白名单十五个路径均可访问且内容类型正确（含 content/ 八个模块与教材，008.2 新增）', async () => {
+test('白名单十六个路径均可访问且内容类型正确（含 content/ 八个模块与教材；009-C 新增 /guidance.js 精确一行）', async () => {
   const cases = [
     ['/', 'text/html', SENTINELS['index.html']],
     ['/index.html', 'text/html', SENTINELS['index.html']],
@@ -117,6 +118,7 @@ test('白名单十五个路径均可访问且内容类型正确（含 content/ �
     ['/learning/multiagent-lab.md', 'text/plain', SENTINELS['learning/multiagent-lab.md']],
     ['/content/briefs.js', 'text/javascript', SENTINELS['content/briefs.js']],
     ['/notes.js', 'text/javascript', SENTINELS['notes.js']],
+    ['/guidance.js', 'text/javascript', SENTINELS['guidance.js']],
   ];
   for (const [pathname, typePrefix, sentinel] of cases) {
     const res = await request(pathname);
@@ -255,6 +257,12 @@ test('POST/PUT/DELETE 静态路径返回 405 并带 Allow: GET, HEAD', async () 
     const res = await request('/domain.js', { method });
     assert.equal(res.status, 405, method);
     assert.equal(res.headers.allow, 'GET, HEAD', method);
+  }
+  // 009-C：新增模块只扩精确路径，不新增任何写接口（POST /guidance.js 同样 405）。
+  for (const method of ['POST', 'PUT', 'DELETE']) {
+    const res = await request('/guidance.js', { method });
+    assert.equal(res.status, 405, `guidance.js ${method}`);
+    assert.equal(res.headers.allow, 'GET, HEAD', `guidance.js ${method} Allow`);
   }
 });
 

@@ -78,7 +78,7 @@ test('真实 LIBRARY 通过契约校验：跨引用可解析、深度与依据�
   assert.equal(result.ok, true);
 });
 
-test('真实 LIBRARY 规模（A14，008.2）：4 方向（start 5/4/0/0、archive 3/9/8/11）、49 篇（1 deep + 2 standard + 42 quick + 4 entry，含 11 篇经典）、2 材料、11 条技术路线、2 期简报（09-21 期 3 条 + 09-22 空窗口期）', () => {
+test('真实 LIBRARY 规模（A14，008.2；009-A 修复 A11；PLAN-010 阶段 A 更新：首批 2 综述 standard + 4 近邻 quick 尾部追加，49→55 篇、材料 2→5）：4 方向（start 5/4/0/0、archive 3/9/8/11，路线不变）、55 篇（1 deep + 4 standard + 46 quick + 4 entry，含 11 篇经典）、5 材料、13 条技术路线（featured 3）、2 期简报', () => {
   assert.equal(LIBRARY.directions.length, 4);
   assert.deepEqual(
     LIBRARY.directions.map((d) => [d.id, d.status]),
@@ -93,15 +93,23 @@ test('真实 LIBRARY 规模（A14，008.2）：4 方向（start 5/4/0/0、archiv
     LIBRARY.directions.map((d) => [trackEntries(LIBRARY, d.id, 'start').length, trackEntries(LIBRARY, d.id, 'archive').length]),
     [[5, 3], [4, 9], [0, 8], [0, 11]],
   );
-  assert.equal(LIBRARY.papers.length, 49);
+  // PLAN-010 授权替代说明：数量断言按首批内容入库精确更新（非放宽）——旧 49 篇相对顺序不变，
+  // 新 6 篇追加尾部（见下一断言 slice(45)）；深度分布按交付实况钉住（2 综述 standard、4 近邻 quick）。
+  assert.equal(LIBRARY.papers.length, 55);
   const byDepth = { deep: 0, standard: 0, quick: 0, entry: 0 };
   for (const paper of LIBRARY.papers) byDepth[deliveredDepthOf(paper)] += 1;
-  assert.deepEqual(byDepth, { deep: 1, standard: 2, quick: 42, entry: 4 });
+  assert.deepEqual(byDepth, { deep: 1, standard: 4, quick: 46, entry: 4 });
   assert.equal(LIBRARY.papers.filter((p) => p.collection === 'foundations').length, 11);
-  // 原 45 篇相对顺序不变，新四篇追加在尾部（05 §2）。
-  assert.deepEqual(LIBRARY.papers.slice(45).map((p) => p.id), ['beyond-frameworks', 'memgpt', 'handoff-tax', 'handoff-debt']);
-  assert.equal(LIBRARY.materials.length, 2);
-  assert.deepEqual(LIBRARY.materials.map((m) => m.coverage.mode), ['editorial-primer', 'editorial-primer']);
+  // 原 45 篇相对顺序不变，008 四篇与 PLAN-010 六篇追加在尾部（05 §2 / PLAN-010 硬约束 1）。
+  assert.deepEqual(LIBRARY.papers.slice(45).map((p) => p.id), [
+    'beyond-frameworks', 'memgpt', 'handoff-tax', 'handoff-debt',
+    'survey-mem-tois', 'survey-comms-fcs', 'compression-cost', 'do-not-restart', 'memcollab', 'routed-graph-handoff',
+  ]);
+  assert.equal(LIBRARY.materials.length, 5);
+  assert.deepEqual(
+    LIBRARY.materials.map((m) => m.coverage.mode),
+    ['editorial-primer', 'editorial-primer', 'editorial-primer', 'editorial-primer', 'editorial-primer'],
+  );
   // 包4：13 路线 / 26 单元 / featured 恰好三条（order 1–3），10 个 featured 单元全 ready（A11）。
   assert.equal(LIBRARY.technicalRoutes.length, 13);
   assert.equal(LIBRARY.technicalRoutes.reduce((n, t) => n + (t.units ?? []).length, 0), 26);
@@ -249,8 +257,8 @@ test('事实字段与基线一致：45 篇 id/url、三条路线顺序、PLAN-00
     lora: 'https://arxiv.org/abs/2106.09685',
     'peft-guide': 'https://arxiv.org/abs/2303.15647',
   };
-  // 原 45 篇 id/url 不变，新四篇追加（008.2）。
-  assert.equal(LIBRARY.papers.length, 49);
+  // 原 45 篇 id/url 不变；PLAN-010 首批 6 篇尾部追加（010 授权的数量精确更新，非放宽）。
+  assert.equal(LIBRARY.papers.length, 55);
   for (const [id, url] of Object.entries(expectedUrls)) {
     assert.equal(getPaper(LIBRARY, id)?.url, url, `PLAN-005 前条目 ${id} 的 url 不得改动`);
   }
@@ -414,12 +422,12 @@ test('buildHash 与 parseHash 互逆（含需编码的 id 与首页）', () => {
 
 // ---------- 首页与方向 ----------
 
-test('首页：五区用途与入口齐备，首读来自编辑设置且不叫“继续阅读”，首次使用三步', () => {
+test('首页：四区（PLAN-010 阶段 B 授权替代 008 五区）用途与入口齐备，首读来自编辑设置且不叫“继续阅读”，首次使用三步', () => {
   const home = LIBRARY.home;
   assert.equal(typeof home.title, 'string');
   assert.ok(home.intro.length > 10);
-  // REWORK-007 §2：区序按每日回访价值（精选→论文→方向→技术→经典），数据与渲染同序。
-  assert.deepEqual(home.zones.map((z) => z.key), ['brief', 'papers', 'directions', 'learn', 'foundations']);
+  // PLAN-010 授权替代说明：区序五区→四区由用户 2026-09-24 批准（PLAN-010 阶段 B），旧区内容重排归入四区不删。
+  assert.deepEqual(home.zones.map((z) => z.key), ['goal', 'survey', 'topic', 'tech']);
   for (const zone of home.zones) {
     assert.ok(zone.purpose.length > 15, zone.key);
     assert.ok(zone.howToUse.length > 10, zone.key);
@@ -774,7 +782,8 @@ test('libraryStatus 与 EMPTY_NOTICES：空集合必须走明确空态文案', (
   const status = libraryStatus(LIBRARY);
   assert.deepEqual(
     { directions: status.directions, papers: status.papers, materials: status.materials, technicalRoutes: status.technicalRoutes, briefs: status.briefs },
-    { directions: 4, papers: 49, materials: 2, technicalRoutes: 13, briefs: 2 },
+    // PLAN-010 授权替代说明：数量随首批内容入库精确更新（49→55、材料 2→5），非放宽。
+    { directions: 4, papers: 55, materials: 5, technicalRoutes: 13, briefs: 2 },
   );
   assert.equal(status.allEmpty, false);
   assert.equal(libraryStatus({ directions: [], papers: [], technicalRoutes: [], briefs: [] }).allEmpty, true);
@@ -1475,4 +1484,294 @@ test('A13：quick 依据文案共同函数（摘要级 vs 指定正文已核）'
   const bad2 = scaffoldFixture();
   bad2.papers[0].sections = [{ id: 's1', heading: 'h', blocks: [{ kind: 'paragraph', spans: [{ kind: 'text', text: 'x' }] }] }];
   assert.match(validateLibrary(bad2).errors.join('\n'), /不应有正文 sections/);
+});
+
+// ---------- DYNAMIC-GUIDANCE-009 / A 包：基线地图 LIBRARY.map（R1 模型、R7 来源、R8-A 验收） ----------
+// 本文件内的基线校验器（schema 层 + 核查层）先落在测试侧；B 包渲染解析、C 包覆盖层按 R1 三层校验
+// 各自复用语义。R7「保留可用」清单见 docs/DYNAMIC-GUIDANCE-009.md 的 2026-09-23 R7 审查记录表。
+
+const MAP_NODE_ID = /^map-[a-z0-9][a-z0-9.-]{1,47}$/;
+const MAP_EDGE_ID = /^map-edge-[a-z0-9][a-z0-9.-]{1,42}$/;
+const MAP_SIDES = ['problem', 'method'];
+const MAP_MEANINGS = ['addresses', 'variant-of', 'conflicts', 'depends-on', 'inspires'];
+const MAP_ORIGIN_TYPES = ['content', 'advisor', 'ai', 'self'];
+const MAP_LIMIT_NODES = 12;
+const MAP_LIMIT_EDGES = 15;
+
+// 2026-09-23（009-A）R7 审查结论为「保留可用」的站内条目（正文级独立复核或编辑标注自洽）：
+// - beyond-frameworks / memgpt / handoff-tax / handoff-debt：当日逐节重读原文，数字与设置比对一致；
+// - mat-cross-harness-map / mat-read-empirical：编辑 primer，来源说明与标注经核对；
+// - cross-harness-collab 与 step-collab-1..5：用户批准的方向定义与路线文字（编辑事实）。
+// 不得进入 evidence 的：tosem2025-acceptance、swe-bench（本轮保留收窄——未能重读正文），
+// agentless（仅摘要级且不入本地图），deferred 方向全部条目，以及任何未登记条目。
+const R7_RETAINED_USABLE_2026_09_23 = new Set([
+  'mat-cross-harness-map',
+  'mat-read-empirical',
+  'beyond-frameworks',
+  'memgpt',
+  'handoff-tax',
+  'handoff-debt',
+  'cross-harness-collab',
+  'step-collab-1',
+  'step-collab-2',
+  'step-collab-3',
+  'step-collab-4',
+  'step-collab-5',
+]);
+
+// 未复核/保留收窄条目不得被基线地图节点引用。检查对象＝节点的 refs（009 复核修复轮：
+// 旧版误以 map-* 节点 id 做该匹配，恒不命中、为死检查）；匹配前缀集与旧正则逐项一致。
+const MAP_UNREVIEWED_REF = /^(tosem2025|swe-bench|agentless|trusted-rag|graph-harmful)/;
+
+function mapSiteIdSet(lib) {
+  const ids = new Set();
+  for (const p of lib.papers) ids.add(p.id);
+  for (const m of lib.materials ?? []) ids.add(m.id);
+  for (const d of lib.directions) {
+    ids.add(d.id);
+    for (const step of [...(d.startRoute ?? []), ...(d.archiveRoute ?? [])]) ids.add(step.id);
+  }
+  for (const t of lib.technicalRoutes) ids.add(t.id);
+  return ids;
+}
+
+function baselineMapErrors(map, lib) {
+  const errors = [];
+  if (!map || typeof map !== 'object') return ['map 必须是对象'];
+  if (!Array.isArray(map.nodes) || !Array.isArray(map.edges)) return ['map.nodes / map.edges 必须是数组'];
+  const site = mapSiteIdSet(lib);
+  if (map.nodes.length > MAP_LIMIT_NODES) errors.push(`节点总额 ${map.nodes.length} 超上限 ${MAP_LIMIT_NODES}`);
+  if (map.edges.length > MAP_LIMIT_EDGES) errors.push(`边总额 ${map.edges.length} 超上限 ${MAP_LIMIT_EDGES}`);
+  const seenIds = new Set();
+  const nodeById = new Map();
+  for (const n of map.nodes) {
+    const at = `节点 ${n?.id ?? '?'}`;
+    if (typeof n.id !== 'string' || !MAP_NODE_ID.test(n.id)) errors.push(`${at}: id 不符合命名`);
+    else if (n.id.startsWith('map-edge-')) errors.push(`${at}: 节点 id 不得占用边命名空间`);
+    else if (seenIds.has(n.id)) errors.push(`${at}: id 重复`);
+    else seenIds.add(n.id);
+    if (!MAP_SIDES.includes(n.side)) errors.push(`${at}: side 必须是 ${MAP_SIDES.join('|')}`);
+    // label＝≤40 字名词性标签，summary≤300 字才是概述位（009 复核意见 A13：标签内不得混入整句概述）。
+    if (typeof n.label !== 'string' || n.label.trim() === '' || n.label.length > 40 || /[。！？;；]/.test(n.label)) {
+      errors.push(`${at}: label 需为 ≤40 字名词性标签（不得混入句子标点）`);
+    }
+    if (typeof n.summary !== 'string' || n.summary.trim() === '' || n.summary.length > 300) errors.push(`${at}: summary 需非空且 ≤300 字`);
+    if (!Array.isArray(n.refs) || n.refs.length === 0) errors.push(`${at}: refs 必须是非空数组`);
+    else for (const r of n.refs) {
+      if (!site.has(r)) errors.push(`${at}: ref 无法解析 ${r}`);
+      else if (MAP_UNREVIEWED_REF.test(r)) errors.push(`${at}: ref 指向未复核条目 ${r}`);
+    }
+    const s = n.source;
+    if (!s || !MAP_ORIGIN_TYPES.includes(s.originType)) errors.push(`${at}: source.originType 必须封闭枚举`);
+    else if (['advisor', 'ai'].includes(s.originType) && n.side !== 'problem') errors.push(`${at}: advisor/ai 节点只允许 problem 侧`);
+    if (!s || typeof s.note !== 'string' || s.note.trim() === '' || s.note.length > 200) errors.push(`${at}: source.note 需非空且 ≤200 字`);
+    if (!s || !/^\d{4}-\d{2}-\d{2}$/.test(s.asOf ?? '')) errors.push(`${at}: source.asOf 必须是 YYYY-MM-DD`);
+    nodeById.set(n.id, n);
+  }
+  const edgeIds = new Set();
+  for (const e of map.edges) {
+    const at = `边 ${e?.id ?? '?'}`;
+    if (typeof e.id !== 'string' || !MAP_EDGE_ID.test(e.id)) errors.push(`${at}: id 须形如 map-edge-* 且符合命名`);
+    else if (seenIds.has(e.id)) errors.push(`${at}: id 与节点同用`);
+    else if (edgeIds.has(e.id)) errors.push(`${at}: id 重复`);
+    edgeIds.add(e.id);
+    const from = nodeById.get(e.from);
+    const to = nodeById.get(e.to);
+    if (!from) errors.push(`${at}: from 无法解析 ${e.from}`);
+    if (!to) errors.push(`${at}: to 无法解析 ${e.to}`);
+    if (from && to && from.id === to.id) errors.push(`${at}: 自环`);
+    const meaning = MAP_MEANINGS.find(
+      (m) => typeof e.meaning === 'string' && (e.meaning === m || /^[：:（( \-]/.test(e.meaning.slice(m.length))),
+    );
+    if (!meaning) errors.push(`${at}: meaning 必须以固定词汇开头（${MAP_MEANINGS.join('|')}）`);
+    if (meaning === 'addresses' && from && to && !(from.side === 'method' && to.side === 'problem')) {
+      errors.push(`${at}: addresses 必须方法→问题`);
+    }
+    if (!Array.isArray(e.evidence) || e.evidence.length === 0) errors.push(`${at}: evidence 必须是非空数组`);
+    else {
+      for (const ev of e.evidence) {
+        if (!site.has(ev)) errors.push(`${at}: evidence 无法解析 ${ev}`);
+        else if (!R7_RETAINED_USABLE_2026_09_23.has(ev)) errors.push(`${at}: evidence 未命中 R7 保留可用 ${ev}`);
+      }
+    }
+    const es = e.source;
+    if (!es || !MAP_ORIGIN_TYPES.includes(es.originType)) errors.push(`${at}: source.originType 必须封闭枚举`);
+    else if ((meaning === 'addresses' || (from?.side === 'method' && to?.side === 'method')) && !['content', 'self'].includes(es.originType)) {
+      errors.push(`${at}: addresses/方法间边的来源不得是 advisor/ai`);
+    }
+    if (!es || typeof es.note !== 'string' || es.note.trim() === '' || es.note.length > 200) errors.push(`${at}: source.note 需非空且 ≤200 字`);
+    else if (!/非(论文)?引用/.test(es.note)) errors.push(`${at}: source.note 须注明编辑排定、非（论文）引用（PF-07）`);
+    if (!es || !/^\d{4}-\d{2}-\d{2}$/.test(es.asOf ?? '')) errors.push(`${at}: source.asOf 必须是 YYYY-MM-DD`);
+  }
+  return errors;
+}
+
+test('DG009-A01：基线地图存在、两侧语义、总额受 R1 上限约束且零形状错误', () => {
+  assert.ok(LIBRARY.map && Array.isArray(LIBRARY.map.nodes) && Array.isArray(LIBRARY.map.edges), 'LIBRARY.map 必须承载于聚合器（R1 基线承载）');
+  assert.deepEqual(baselineMapErrors(LIBRARY.map, LIBRARY), []);
+  assert.equal(LIBRARY.map.nodes.length, 10, '基线 10 节点（为覆盖层留 2 个余量）');
+  assert.equal(LIBRARY.map.edges.length, 12, '基线 12 边（留 3 条余量）');
+  assert.ok(LIBRARY.map.nodes.length <= MAP_LIMIT_NODES);
+  assert.ok(LIBRARY.map.edges.length <= MAP_LIMIT_EDGES);
+  assert.ok(LIBRARY.map.nodes.some((n) => n.side === 'problem') && LIBRARY.map.nodes.some((n) => n.side === 'method'), 'problem/method 两侧都必须在场');
+  // 基线来源全部 content（A 包产出＝站内已核条目；advisor/ai 线索只能走问题侧文字行或 C 包提案）。
+  for (const n of LIBRARY.map.nodes) assert.equal(n.source.originType, 'content', n.id);
+  for (const e of LIBRARY.map.edges) assert.equal(e.source.originType, 'content', e.id);
+  // 地图数据变更必须同步版本注记（复核意见 A12：不能只靠字段内容，基线可追溯）。
+  // PLAN-010/011 授权说明：任务包明示「聚合器 contentVersion 按实施时实际当前版本递增，不得回写旧版本号」；
+  // PLAN-011 修复轮审查裁决：版本必须递增为 v5.4（不自裁不递增），基线地图自 v5.2 起承载、v5.4 继续承载。
+  assert.match(LIBRARY.contentVersion, /^LIBRARY-CONTENT v5\.4/, '承载基线地图的内容包版本必须是 v5.4（010/011 递增授权）');
+  assert.match(LIBRARY.contentVersion, /LIBRARY\.map/, 'contentVersion 需登记地图变更');
+  assert.equal(LIBRARY.meta.updatedOn, '2026-09-24', 'updatedOn 与内容修订日一致');
+  // 每条边逐条自带 PF-07 声明（复核意见 A15：不依赖聚合器头注释；新边漏声明将被 DG009-A03 反例拒绝）。
+  const declared = LIBRARY.map.edges.filter((e) => /非(论文)?引用/.test(e.source.note)).length;
+  assert.equal(declared, LIBRARY.map.edges.length, '每条边的 source.note 须逐条声明编辑排定、非引用');
+  assert.equal(declared, 12, '当前基线 12 边全部逐条声明（本工作区无 19 边状态）');
+});
+
+test('DG009-A02：refs 全部站内可解析；边 evidence 100% 命中 R7「保留可用」（R8-A），保留收窄条目不成边', () => {
+  const site = mapSiteIdSet(LIBRARY);
+  for (const n of LIBRARY.map.nodes) {
+    for (const r of n.refs) assert.ok(site.has(r), `节点 ${n.id} 的 ref 应站内可解析：${r}`);
+    // 未复核/保留收窄条目不得被地图节点引用——作用域＝refs（旧版此处误检 map-* 节点 id，恒真死检查；
+    // DG009-A03 已加同规则反例回归，防止再次退化为永不触发）。
+    for (const r of n.refs) assert.ok(!MAP_UNREVIEWED_REF.test(r), `未复核条目不得被地图节点引用：${n.id} → ${r}`);
+  }
+  const forbidden = ['tosem2025-acceptance', 'swe-bench', 'agentless', 'trusted-rag', 'graph-harmful-fusion', 'code-agent-verification'];
+  for (const e of LIBRARY.map.edges) {
+    assert.ok(Array.isArray(e.evidence) && e.evidence.length > 0, e.id);
+    for (const ev of e.evidence) {
+      assert.ok(site.has(ev), `边 ${e.id} 的 evidence 应站内可解析：${ev}`);
+      assert.ok(R7_RETAINED_USABLE_2026_09_23.has(ev), `边 ${e.id} 的 evidence 必须命中 R7 保留可用：${ev}`);
+      assert.ok(!forbidden.includes(ev), `边 ${e.id} 引用了保留收窄/未复核条目：${ev}`);
+    }
+  }
+  // 地图 id 与既有内容 id 不冲突（map-* 前缀在旧集合中从未使用）。
+  assert.equal(LIBRARY.papers.filter((p) => p.id.startsWith('map-')).length, 0);
+  assert.equal(LIBRARY.directions.filter((d) => d.id.startsWith('map-')).length, 0);
+});
+
+test('DG009-A03（反例）：越限、悬空引用、非复核证据、词汇违例、命名空间与来源限制均拒绝', () => {
+  const mkNode = (i, side = 'problem') => ({
+    id: `map-x-extra${i}`,
+    side,
+    label: '测试节点',
+    summary: '测试摘要',
+    refs: ['cross-harness-collab'],
+    source: { originType: 'content', note: 'fixture', asOf: '2026-09-23' },
+  });
+  const mkEdge = (i) => ({
+    id: `map-edge-x${i}`,
+    from: 'map-meth-fourlayers',
+    to: 'map-prog-budget',
+    meaning: 'addresses：fixture',
+    evidence: ['mat-cross-harness-map'],
+    source: { originType: 'content', note: '编辑排定，非引用', asOf: '2026-09-23' },
+  });
+  const cases = [
+    [(m) => { for (let i = 0; i < 3; i++) m.nodes.push(mkNode(i)); }, /节点总额 13 超上限/],
+    [(m) => { for (let i = 0; i < 4; i++) m.edges.push(mkEdge(i)); }, /边总额 16 超上限/],
+    [(m) => { m.nodes[0].refs.push('ghost-ref'); }, /ref 无法解析/],
+    // 作用域回归（B2 修复轮）：未复核条目经 refs 引用即拒绝——旧版死检查误检 map-* 节点 id，恒不命中。
+    [(m) => { m.nodes[0].refs.push('swe-bench'); }, /ref 指向未复核条目/],
+    [(m) => { m.nodes[0].refs.push('tosem2025-acceptance'); }, /ref 指向未复核条目/],
+    [(m) => { m.edges[0].evidence = ['tosem2025-acceptance']; }, /未命中 R7 保留可用/],
+    [(m) => { m.edges[0].evidence = ['ghost-evidence']; }, /evidence 无法解析/],
+    [(m) => { m.edges[0].evidence = []; }, /evidence 必须是非空数组/],
+    [(m) => { m.nodes[0].side = 'topic'; }, /side 必须是/],
+    [(m) => { m.nodes[0].label = '很长'.repeat(21); }, /label 需为 ≤40 字名词性标签/],
+    // A13 回归对：≤40 字但混入整句标点同样拒绝（概述归 summary，不许进 label）。
+    [(m) => { m.nodes[0].label = '这是一句整句概述，它不是标签。'; }, /label 需为 ≤40 字名词性标签/],
+    [(m) => { m.nodes[0].id = 'map-edge-sneak'; }, /不得占用边命名空间/],
+    [(m) => { m.edges[0].meaning = 'cites：论文引用关系'; }, /meaning 必须以固定词汇开头/],
+    [(m) => { const e = m.edges.find((x) => x.meaning.startsWith('addresses')); e.from = 'map-prog-budget'; e.to = 'map-meth-fourlayers'; }, /addresses 必须方法→问题/],
+    [(m) => { const e = m.edges.find((x) => x.meaning.startsWith('addresses')); e.source.originType = 'ai'; }, /来源不得是 advisor\/ai/],
+    [(m) => { const n = m.nodes.find((x) => x.side === 'method'); n.source.originType = 'advisor'; }, /advisor\/ai 节点只允许 problem 侧/],
+    [(m) => { m.edges[0].source.note = '没有 PF-07 声明'; }, /非（论文）引用/],
+    [(m) => { m.edges[0].from = 'map-ghost'; }, /from 无法解析/],
+    [(m) => { const dup = structuredClone(m.nodes[0]); m.nodes.push(dup); }, /id 重复/],
+  ];
+  for (const [mutate, pattern] of cases) {
+    const clone = structuredClone(LIBRARY.map);
+    mutate(clone);
+    const result = baselineMapErrors(clone, LIBRARY);
+    assert.ok(result.length > 0, `反例应被拒绝：${pattern}`);
+    assert.match(result.join('\n'), pattern);
+  }
+});
+
+test('DG009-A04：起步动线 step-collab-1→2 有读前术语、选文理由与可核对的节/版本定位（R2 四段动线）', () => {
+  const collabStart = trackEntries(LIBRARY, 'cross-harness-collab', 'start');
+  const step1 = collabStart[0];
+  const step2 = collabStart[1];
+  assert.equal(step1.materialId, 'mat-cross-harness-map');
+  assert.equal(step2.paperId, 'beyond-frameworks');
+
+  // 段一（背景与术语）：primer 与卡 learner.gist 携带读前词汇。
+  const primer = getMaterial(LIBRARY, 'mat-cross-harness-map');
+  assert.match(primer.nextAction, /Beyond Frameworks/, '导读收尾应指向第二步');
+  assert.match(primer.nextAction, /§3\.2/, '导读收尾给可核对的节级定位');
+  const bf = getPaper(LIBRARY, 'beyond-frameworks');
+  assert.match(bf.learner.gist, /§3\.2/);
+  assert.match(bf.learner.gist, /§3\.5/);
+  assert.match(bf.learner.gist, /instructor/);
+
+  // 段二（为什么选它）：step.purpose 与 reasons（009-A 后含节级依据）。
+  assert.match(step2.purpose, /维度/);
+  assert.ok(bf.reasons.some((r) => /§3\.2/.test(r) && /§3\.5/.test(r)), 'reasons 至少一条给小节分布依据');
+  assert.match(step2.readWhen, /§3\.2–3\.5/);
+
+  // 段三（原文定位）：coverage 版本与节列表逐字可核对（2026-09-23 定向复核）。
+  assert.match(bf.coverage.version, /2025\.acl-long\.1037/);
+  assert.match(bf.coverage.version, /21361–21375/);
+  assert.match(bf.coverage.version, /2505\.12467v1/);
+  assert.deepEqual(
+    bf.coverage.sections,
+    ['摘要', '引言', '§3.2 治理', '§3.3 参与', '§3.4 交互模式', '§3.5 上下文/历史管理', '§4.1 实验场景（DEI/SES）', 'Limitations'],
+  );
+  assert.equal(bf.coverage.checkedAt, '2026-09-23');
+  assert.match(bf.coverage.basis, /009-A/);
+  assert.match(bf.coverage.limitations, /上一轮完整对话/, 'C1 边界保留');
+
+  // 段四（读完写下）：问题指向原文可核对处。
+  assert.ok(bf.questions.some((q) => /§3\.5/.test(q) && /C1/.test(q)), 'questions 含可核对的 §3.5/C1 自查题');
+
+  // 后续步骤的已核定位（step-collab-3 读法）与 MemGPT 卡小节登记一致。
+  const step3 = collabStart[2];
+  assert.match(step3.readWhen, /§2\.1–2\.4/);
+  const memgpt = getPaper(LIBRARY, 'memgpt');
+  assert.ok(memgpt.coverage.sections.some((s) => s.startsWith('§2.1')));
+  assert.ok(memgpt.coverage.sections.some((s) => s.startsWith('§2.4')));
+  assert.equal(memgpt.coverage.checkedAt, '2026-09-23');
+
+  // 换手两卡的复核注记（步骤文案与卡一致）。
+  assert.equal(getPaper(LIBRARY, 'handoff-tax').coverage.checkedAt, '2026-09-23');
+  assert.equal(getPaper(LIBRARY, 'handoff-debt').coverage.checkedAt, '2026-09-23');
+});
+
+test('DG009-A05（R7 诚实边界）：未复核条目的深度声明与文案纪律不越位', () => {
+  // TOSEM：本轮未能重读正文 → checkedAt 不刷新，basis 注明未重读。
+  const tosem = getPaper(LIBRARY, 'tosem2025-acceptance');
+  assert.equal(tosem.coverage.checkedAt, '2026-09-15', '未重新核查不得刷新 checkedAt');
+  assert.match(tosem.coverage.basis, /未重读全文/);
+  assert.match(tosem.coverage.basis, /不.*刷新|未刷新/, '范围注记');
+  // SWE-bench：两类测试判据不在当前 v3 摘要 → 摘要级卡不得把正文措辞当已证事实。
+  const swe = getPaper(LIBRARY, 'swe-bench');
+  assert.equal(swe.coverage.mode, 'abstract');
+  assert.match(swe.coverage.basis, /摘要没有说明判定机制|v3 摘要.*不冒充已证|不冒充已证/);
+  assert.match(swe.lead, /待核/);
+  assert.match(swe.learner.gist, /待核/);
+  assert.match(swe.coverage.version, /v2 2024-04-05/, '本次补全 v2 日期（已核对）');
+  const step4 = trackEntries(LIBRARY, 'code-agent-verification', 'start').find((s) => s.paperId === 'swe-bench');
+  assert.match(step4.purpose, /本卡摘要级未证|摘要级、未证|未证/);
+  // agentless：摘要级，无节/图指引。
+  const agl = getPaper(LIBRARY, 'agentless');
+  assert.equal(agl.coverage.mode, 'abstract');
+  assert.deepEqual(agl.coverage.sections, []);
+  assert.match(agl.coverage.basis, /009-A/);
+  const step3 = trackEntries(LIBRARY, 'code-agent-verification', 'start').find((s) => s.paperId === 'agentless');
+  assert.doesNotMatch(step3.purpose + step3.readWhen + step3.check, /§|图 \d|表 \d/, '摘要级路线节点不得出现节/图级指引');
+  // A14 正例：不止「无越位」，还须正面声明摘要级读法。
+  assert.match(step3.check, /摘要级/, 'step-code-3 文案须正面标注摘要级读法');
+  assert.equal(depthBasisLabel(agl), '摘要级判断', 'agentless 卡依据正面呈现为摘要级判断（非「指定正文已核」）');
 });

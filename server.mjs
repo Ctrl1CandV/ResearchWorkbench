@@ -5,7 +5,8 @@
 //   不结束占用端口的进程。
 // 静态部分：
 // - 原始 URL 精确匹配固定白名单（/、/index.html、/styles.css、/library.js、
-//   /library-content.js、/content/ 八个数据模块、/learning/multiagent-lab.md、/notes.js）；
+//   /library-content.js、/content/ 八个数据模块、/learning/multiagent-lab.md、/notes.js、
+//   /guidance.js——009-C 新增前端纯数据模块，仅为精确路径一行，不新增写接口、不新增 API）；
 //   其他路径（含 query、大小写、编码、遍历）404；
 //   畸形百分号编码 400；不做路径解码拼接、不做目录列表。
 // - 固定资源读取前拒绝符号链接，并核验 realpath 仍在 public 内。
@@ -50,6 +51,8 @@ const ROUTE_MAP = new Map([
   ['/content/materials.js', 'content/materials.js'],
   ['/learning/multiagent-lab.md', 'learning/multiagent-lab.md'],
   ['/notes.js', 'notes.js'],
+  // 009-C：导学提案模块（public/guidance.js）——精确路径白名单唯一新增项。
+  ['/guidance.js', 'guidance.js'],
 ]);
 
 const CONTENT_TYPES = new Map([
