@@ -15,6 +15,7 @@
 //   摘要级不等于精读，入口条目不冒充阅读卡；打开论文或外链不改变任何本人状态。
 
 import { LIBRARY } from './library-content.js';
+import { renderSurveys } from './surveys.js';
 import {
   V3_STATUS,
   V3_STATUS_LABELS,
@@ -157,6 +158,8 @@ const NAV_ACTIVE_BY_VIEW = Object.freeze({
   home: 'home',
   // B 包：领域地图从首页首屏「打开地图」进入，归首页导航（导航保持六入口，DESIGN 不变）。
   map: 'home',
+  surveys: 'surveys',
+  survey: 'surveys',
   // C 包：导学调整页同理归首页项（不新增侧栏入口，保持导航六项）。
   guidance: 'home',
   directions: 'directions',
@@ -346,16 +349,18 @@ export function parseHash(raw) {
     });
   if (parts.some((p) => p === null || p === '' || p === '.' || p === '..')) return null;
   const [view, id] = parts;
-  const listViews = ['home', 'map', 'guidance', 'directions', 'papers', 'learn', 'brief', 'foundations'];
+  const listViews = ['home', 'map', 'guidance', 'directions', 'papers', 'learn', 'brief', 'foundations', 'surveys'];
   let parsed = null;
   if (parts.length === 1 && listViews.includes(view)) {
     parsed = { view, id: null };
   } else if (
     parts.length === 2 &&
-    (view === 'route' || view === 'paper' || view === 'material' || view === 'learn' || view === 'brief')
+    (view === 'route' || view === 'paper' || view === 'material' || view === 'learn' || view === 'brief' || view === 'survey')
   ) {
     const mapped = view === 'learn' ? 'learnRoute' : view === 'brief' ? 'briefItem' : view;
     parsed = { view: mapped, id };
+  } else if (parts.length === 4 && view === 'survey' && parts[2] === 'unit') {
+    parsed = { view: 'survey', id: parts[1], unitId: parts[3] };
   }
   if (!parsed) return null;
   if (queryString === null) return parsed;
@@ -2467,9 +2472,7 @@ function renderHomeReader(container) {
     return section;
   };
 
-  const land = renderLibrary.landscape;
-  const layerIntro = (land?.layers ?? []).map((layer) => layer.title).join(' · ');
-  card('知识地图', `从 AI 基础到 Agent 全景，再走进专题：${layerIntro}。`, '#/map', '浏览知识地图');
+  card('综述阅读', '按文章阅读一篇综述的完整讲解、内部结构和原文定位；旧知识地图保留为背景导读。', '#/surveys', '打开综述书架');
 
   const directions = activeDirections(renderLibrary);
   const directionCard = card(
@@ -2748,6 +2751,7 @@ function renderHomeLegacy(container) {
       }
     } else if (zone.key === 'survey') {
       body = el('div', 'lib-zone-body');
+      body.appendChild(link('#/surveys', '进入综述阅读书架（文章结构、阅读正文与原文回查）', 'lib-btn'));
       // PLAN-010 过渡态（主会话 REV 待定稿）：当前仅记忆/通信两个专题分支综述，
       // 广域「AI 发展到 Agent」脉络图待来源包补入后在本区扩展，不以两个专题综述充当总览。
       // 广域脉络图三层介绍 + 直接入口（REV001）；数据未接入时如实过渡，不放假数据。
@@ -2763,7 +2767,7 @@ function renderHomeLegacy(container) {
           sub.appendChild(line);
         }
         const entry = el('p', 'lib-first-line');
-        entry.appendChild(link('#/map', '打开广域脉络图（图 + 层级文本 + 节点详解）', 'lib-btn'));
+        entry.appendChild(link('#/map', '打开背景导读（AI 基础 → Agent 全景）', 'lib-btn'));
         sub.appendChild(entry);
         body.appendChild(sub);
       } else {
@@ -5795,6 +5799,12 @@ function renderApp() {
       break;
     case 'map':
       renderMap(container);
+      break;
+    case 'surveys':
+      renderSurveys(container, parsed);
+      break;
+    case 'survey':
+      renderSurveys(container, parsed);
       break;
     case 'guidance':
       renderGuidance(container);

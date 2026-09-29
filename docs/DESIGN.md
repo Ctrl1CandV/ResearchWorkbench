@@ -1,5 +1,7 @@
 # 阅读工作台设计系统
 
+2026-09-29：[SURVEY-013](plans/SURVEY-013/README.md) 将主入口发展为综述阅读，设计复核 GO，实施继续推进。ACL/FCS 阅读单元与可操作的文章内维度图、正文锚点、纵向读序、文章间关系图已接入；来源/内容仍有未解决的视觉核验，不能将其标为完整阅读包。旧地图保留。详见 [界面与数据](plans/SURVEY-013/03-interface-and-data.md) 与 [实施报告](plans/SURVEY-013/IMPLEMENTATION-REPORT.md)。下文保留既有设计历史。
+
 本文件记录 2026-09-15 实现的新版阅读界面与个人研究平台设计系统（原 PLAN-003/004 时期，演进脉络见 [HISTORY.md](HISTORY.md)）。产品定位与行为契约见 [SPEC.md](SPEC.md)；原 DESIGN-004/005 设计边界文档已随目录整理归档，不再入库。
 
 ## 2026-09-22 SCAFFOLD-008 实施结果说明

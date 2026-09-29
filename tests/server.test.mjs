@@ -30,6 +30,9 @@ const SENTINELS = {
   'content/briefs.js': '// sentinel-content-briefs',
   'notes.js': '// sentinel-notes',
   'guidance.js': '// sentinel-guidance',
+  'surveys.js': '// sentinel-surveys',
+  'survey-graph.js': '// sentinel-survey-graph',
+  'content/surveys.js': '// sentinel-content-surveys',
 };
 
 const testRoot = await fsp.mkdtemp(path.join(os.tmpdir(), 'rw-server-test-'));
@@ -101,7 +104,7 @@ test('GET / 返回 index 哨兵，内容类型 text/html', async () => {
   assert.ok(res.headers['content-type'].startsWith('text/html'));
 });
 
-test('白名单十六个路径均可访问且内容类型正确（含 content/ 八个模块与教材；009-C 新增 /guidance.js 精确一行）', async () => {
+test('白名单十八个路径均可访问且内容类型正确（综述模块使用精确静态路径）', async () => {
   const cases = [
     ['/', 'text/html', SENTINELS['index.html']],
     ['/index.html', 'text/html', SENTINELS['index.html']],
@@ -119,6 +122,9 @@ test('白名单十六个路径均可访问且内容类型正确（含 content/ �
     ['/content/briefs.js', 'text/javascript', SENTINELS['content/briefs.js']],
     ['/notes.js', 'text/javascript', SENTINELS['notes.js']],
     ['/guidance.js', 'text/javascript', SENTINELS['guidance.js']],
+    ['/surveys.js', 'text/javascript', SENTINELS['surveys.js']],
+    ['/survey-graph.js', 'text/javascript', SENTINELS['survey-graph.js']],
+    ['/content/surveys.js', 'text/javascript', SENTINELS['content/surveys.js']],
   ];
   for (const [pathname, typePrefix, sentinel] of cases) {
     const res = await request(pathname);

@@ -402,6 +402,9 @@ test('parseHash：空 hash 进入首页，五入口与直达视图齐备，非�
   assert.deepEqual(parseHash('#/papers'), { view: 'papers', id: null });
   assert.deepEqual(parseHash('#/learn'), { view: 'learn', id: null });
   assert.deepEqual(parseHash('#/brief'), { view: 'brief', id: null });
+  assert.deepEqual(parseHash('#/surveys'), { view: 'surveys', id: null });
+  assert.deepEqual(parseHash('#/survey/survey-agent-evaluation-2026'), { view: 'survey', id: 'survey-agent-evaluation-2026' });
+  assert.deepEqual(parseHash('#/survey/survey-agent-evaluation-2026/unit/u-intro'), { view: 'survey', id: 'survey-agent-evaluation-2026', unitId: 'u-intro' });
   assert.deepEqual(parseHash('#/paper/astute-rag'), { view: 'paper', id: 'astute-rag' });
   assert.deepEqual(parseHash('#/route/code-agent-verification'), { view: 'route', id: 'code-agent-verification' });
   assert.deepEqual(parseHash('#/learn/tech-t3'), { view: 'learnRoute', id: 'tech-t3' });

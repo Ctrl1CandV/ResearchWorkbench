@@ -1,0 +1,43 @@
+{
+  "manifestVersion": 1,
+  "surveyId": "survey-agent-evaluation-2026",
+  "source": {
+    "localFileName": "2026.findings-acl.1330.pdf",
+    "title": "A Survey on Evaluation of LLM-based Agents",
+    "versionIdentity": "Findings of the Association for Computational Linguistics: ACL 2026, pages 26690–26714",
+    "pdfPages": 25,
+    "sha256": "2C3C80FFF5735925378B99528684559E2D47F82E281957DC4B955397186560B1",
+    "textLayer": "extractable",
+    "localPdfRetainedOutsideRepository": true
+  },
+  "parserRuns": [
+    {
+      "date": "2026-09-29",
+      "service": "MinerU Agent API",
+      "requestId": "e59253da-1e66-4849-a97b-0c3b79d35fe807",
+      "requestedPdfPages": "5-10",
+      "uploadScope": "The API received the complete published PDF; the page selector restricted requested parsing/output, not the uploaded file.",
+      "result": "Markdown text and table text/captions returned; no image assets returned.",
+      "use": "Supplementary reading for benchmark dimensions, evaluation frameworks, and future directions; Table 1 text transcribed into the reading unit, visual layout and notes remain unverified."
+    }
+  ],
+  "coverage": [
+    { "sourceSection": "§1", "pdfPages": "1–2", "status": "read-and-explained", "unitIds": ["survey-scope"] },
+    { "sourceSection": "§2", "pdfPages": "2–3", "status": "read-and-explained", "unitIds": ["core-capabilities"] },
+    { "sourceSection": "§3", "pdfPages": "3–5", "status": "read-and-explained", "unitIds": ["application-evaluation"] },
+    { "sourceSection": "§4", "pdfPages": "5–6", "status": "read-and-explained", "unitIds": ["generalist-evaluation"] },
+    { "sourceSection": "§5", "pdfPages": "6", "status": "read-and-explained; Table 1 text checked against MinerU extraction", "unitIds": ["benchmark-dimensions"] },
+    { "sourceSection": "§6", "pdfPages": "7–8", "status": "read-and-explained; Table 2 text checked", "unitIds": ["evaluation-granularity"] },
+    { "sourceSection": "§7.1–§7.2", "pdfPages": "8–9", "status": "read-and-explained; selected text re-parsed with MinerU", "unitIds": ["trends-and-directions", "separate-model-harness"] },
+    { "sourceSection": "§8 and Limitations", "pdfPages": "9–10", "status": "read-and-explained", "unitIds": ["conclusion-and-limits"] },
+    { "sourceSection": "References", "pdfPages": "10–20", "status": "index-only; cited works not claimed as independently read", "unitIds": [] },
+    { "sourceSection": "Appendix A", "pdfPages": "20–21", "status": "read-and-explained", "unitIds": ["appendix-method"] },
+    { "sourceSection": "Appendix B", "pdfPages": "21–24", "status": "read-and-explained", "unitIds": ["appendix-capability-detail"] },
+    { "sourceSection": "Appendix C–E", "pdfPages": "24–25", "status": "read-and-explained", "unitIds": ["appendix-recommendations"] },
+    { "sourceSection": "Figure 1, Table 1, Table 2, Appendix Figure 2", "status": "caption/table text read; MinerU returned no image assets; visual inspection pending", "unitIds": ["survey-scope", "benchmark-dimensions", "evaluation-granularity", "appendix-capability-detail"] }
+  ],
+  "unresolved": [
+    "The MinerU Agent API received the complete published PDF despite the selected-page request. No private or unpublished source was submitted.",
+    "Figure and table visual layout has not been verified; the local MinerU skill's referenced local_engine.py is absent. Do not promote the package to complete until the visual check is done."
+  ]
+}

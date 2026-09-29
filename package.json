@@ -10,6 +10,7 @@
   "scripts": {
     "start": "node server.mjs",
     "test": "node --test",
-    "check-links": "node scripts/check-links.mjs"
+    "check-links": "node scripts/check-links.mjs",
+    "validate:surveys": "node scripts/validate-surveys.mjs"
   }
 }

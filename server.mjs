@@ -53,6 +53,9 @@ const ROUTE_MAP = new Map([
   ['/notes.js', 'notes.js'],
   // 009-C：导学提案模块（public/guidance.js）——精确路径白名单唯一新增项。
   ['/guidance.js', 'guidance.js'],
+  ['/surveys.js', 'surveys.js'],
+  ['/survey-graph.js', 'survey-graph.js'],
+  ['/content/surveys.js', 'content/surveys.js'],
 ]);
 
 const CONTENT_TYPES = new Map([
