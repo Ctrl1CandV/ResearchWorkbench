@@ -1,0 +1,58 @@
+{
+  "manifestVersion": 1,
+  "surveyId": "survey-llm-agents-arxiv-2023",
+  "source": {
+    "localFileName": "2309.07864v3.pdf",
+    "title": "The Rise and Potential of Large Language Model Based Agents: A Survey",
+    "versionIdentity": "arXiv:2309.07864v3 (2023)",
+    "arxivId": "2309.07864v3",
+    "pdfPages": 87,
+    "sha256": "5E3B2357FF942E1A0E084AE4AF3327011A651CF1F155D108065C70AF369E24AC",
+    "textLayer": "extractable",
+    "localPdfRetainedOutsideRepository": true
+  },
+  "parserRuns": [
+    {
+      "date": "2026-09-29",
+      "service": "MinerU Agent API",
+      "requestId": "d9ee1c91-e844-48c4-a65e-24083ada36b008",
+      "requestedPdfPages": "1-16",
+      "uploadScope": "The API received the complete arXiv PDF; the page selector restricted requested parsing/output, not the uploaded file.",
+      "result": "Markdown text and captions returned; no image assets returned.",
+      "use": "Supplementary reading for introduction, background, and Brain (§3.1); figure visual structure remains unverified."
+    },
+    {
+      "date": "2026-09-29",
+      "service": "MinerU Agent API",
+      "requestId": "6ae4d8c4-56f1-465e-b1af-904c43dd3e9c08",
+      "requestedPdfPages": "17-32",
+      "uploadScope": "The API received the complete arXiv PDF; the page selector restricted requested parsing/output, not the uploaded file.",
+      "result": "Markdown text and captions returned; no image assets returned.",
+      "use": "Supplementary reading for Perception, Action, and practice sections; figure visual structure remains unverified."
+    },
+    {
+      "date": "2026-09-29",
+      "service": "MinerU Agent API",
+      "requestId": "f5aa4718-4c04-4b2f-aef2-e80a6d7df09d08",
+      "requestedPdfPages": "33-48",
+      "uploadScope": "The API received the complete arXiv PDF; the page selector restricted requested parsing/output, not the uploaded file.",
+      "result": "Markdown text and captions returned; no image assets returned.",
+      "use": "Supplementary reading for Agent society, discussion, and conclusion; references (PDF 49–87) were not parsed."
+    }
+  ],
+  "coverage": [
+    { "sourceSection": "§1", "pdfPages": "4–5", "status": "read-and-explained", "unitIds": ["rise-scope"] },
+    { "sourceSection": "§2", "pdfPages": "6–9", "status": "read-and-explained", "unitIds": ["rise-background"] },
+    { "sourceSection": "§3.1 Brain", "pdfPages": "11–16", "status": "read-and-explained; MinerU supplementary text parse", "unitIds": ["rise-brain"] },
+    { "sourceSection": "§3 overview, §3.2 Perception, §3.3 Action", "pdfPages": "10, 17–23", "status": "read-and-explained; MinerU supplementary text parse", "unitIds": ["rise-perception-action"] },
+    { "sourceSection": "§4", "pdfPages": "24–32", "status": "read-and-explained; long application lists compressed", "unitIds": ["rise-practice"] },
+    { "sourceSection": "§5", "pdfPages": "33–40", "status": "read-and-explained; representative-system lists compressed", "unitIds": ["rise-society"] },
+    { "sourceSection": "§6–§7", "pdfPages": "41–48", "status": "read-and-explained", "unitIds": ["rise-discussion"] },
+    { "sourceSection": "References", "pdfPages": "49–87", "status": "index-only; cited works not claimed as independently read", "unitIds": [] },
+    { "sourceSection": "Figures 1–12", "status": "captions extractable; MinerU returned no image assets; visual inspection pending", "unitIds": ["rise-scope", "rise-perception-action", "rise-practice", "rise-society"] }
+  ],
+  "unresolved": [
+    "The MinerU Agent API received the complete 87-page PDF despite selected-page requests. No private or unpublished source was submitted.",
+    "Visual layout of Figures 1–12 remains unverified; the local MinerU skill's referenced local_engine.py is absent. Keep state partial until original visuals can be inspected."
+  ]
+}

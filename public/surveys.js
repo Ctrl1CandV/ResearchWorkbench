@@ -189,6 +189,72 @@ function renderConceptMap(graph, root) {
   draw();
 }
 
+let surveyTocObserver = null;
+
+function markCurrent(buttons, id) {
+  for (const button of buttons) {
+    const on = button.dataset.target === id;
+    button.classList.toggle('is-current', on);
+    if (on) button.setAttribute('aria-current', 'true');
+    else button.removeAttribute('aria-current');
+  }
+}
+
+function revealInScroller(scroller, button) {
+  const box = scroller.getBoundingClientRect();
+  const item = button.getBoundingClientRect();
+  if (item.top < box.top) scroller.scrollTop -= box.top - item.top;
+  else if (item.bottom > box.bottom) scroller.scrollTop += item.bottom - box.bottom;
+}
+
+function bindSurveyToc(toc, headings) {
+  surveyTocObserver?.disconnect();
+  surveyTocObserver = null;
+  const buttons = [...toc.querySelectorAll('button[data-target]')];
+  if (!buttons.length || typeof IntersectionObserver !== 'function') return;
+  const targets = headings.map((heading) => document.getElementById(heading.id)).filter(Boolean);
+  if (!targets.length) return;
+  const pick = () => {
+    const visible = targets.filter((target) => target.dataset.surveyVisible === '1');
+    const above = [...targets].reverse().find((target) => target.getBoundingClientRect().top < 96);
+    const current = visible[0] ?? above ?? targets[0];
+    if (!current || current.id === toc.dataset.current) return;
+    toc.dataset.current = current.id;
+    markCurrent(buttons, current.id);
+    const button = buttons.find((item) => item.dataset.target === current.id);
+    if (button) revealInScroller(toc, button);
+  };
+  surveyTocObserver = new IntersectionObserver((entries) => {
+    for (const entry of entries) entry.target.dataset.surveyVisible = entry.isIntersecting ? '1' : '0';
+    pick();
+  }, { rootMargin: '0px 0px -68% 0px', threshold: 0 });
+  for (const target of targets) surveyTocObserver.observe(target);
+  pick();
+}
+
+function renderReadingIntent(unit) {
+  const actions = unit.readingActions ?? [];
+  if (!actions.length) return null;
+  const section = node('section', 'survey-reading-intent');
+  section.append(node('h2', null, '带着这个问题读'));
+  const list = node('ul');
+  for (const item of actions) {
+    const row = node('li');
+    row.append(node('span', 'survey-intent-action', item.action));
+    row.append(node('span', 'survey-intent-where', item.locator));
+    row.append(node('span', 'survey-intent-why', item.reason));
+    list.append(row);
+  }
+  section.append(list);
+  return section;
+}
+
+function renderUnitJump(href, kicker, title, direction) {
+  const anchor = link(href, '', `survey-unit-jump is-${direction}`);
+  anchor.append(node('span', 'survey-unit-kicker', kicker), node('span', 'survey-unit-name', title));
+  return anchor;
+}
+
 function renderUnit(article, unit, root) {
   rememberSurveyUnit(article, unit.id);
   root.append(link(hash(article.id), '← 返回整篇脉络图', 'survey-back'));
@@ -202,32 +268,35 @@ function renderUnit(article, unit, root) {
   toc.setAttribute('aria-label', '本阅读单元目录');
   toc.append(node('h2', null, '本节脉络'));
   for (const heading of headings) {
-    const item = node('button', null, heading.text); item.type = 'button';
-    item.addEventListener('click', () => document.getElementById(heading.id)?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+    const item = node('button', null, heading.text);
+    item.type = 'button';
+    item.dataset.target = heading.id;
+    item.addEventListener('click', () => {
+      const target = document.getElementById(heading.id);
+      if (!target) return;
+      markCurrent([...toc.querySelectorAll('button[data-target]')], heading.id);
+      target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      try { target.focus({ preventScroll: true }); } catch { /* 标题不可聚焦时仍保留滚动 */ }
+    });
     toc.append(item);
   }
-  const actions = node('section', 'survey-reading-actions');
-  actions.append(node('h2', null, '带着这个问题读'));
-  const actionList = node('ul');
-  for (const item of unit.readingActions ?? []) {
-    actionList.append(node('li', null, `${item.action} · ${item.locator}：${item.reason}`));
-  }
-  actions.append(actionList);
   const body = node('article', 'survey-reading-body');
+  const intent = renderReadingIntent(unit);
+  if (intent) body.append(intent);
   for (const block of unit.blocks ?? []) renderReadingBlock(block, body);
-  toc.append(actions);
   layout.append(toc, body);
   root.append(layout);
+  bindSurveyToc(toc, headings);
   const navigation = node('nav', 'survey-unit-nav');
   navigation.setAttribute('aria-label', '本篇其他阅读单元');
-  navigation.append(node('h2', null, '本篇已整理的其他部分'));
   const orderedIds = [...new Set([...(article.readingPaths?.[0]?.steps ?? []).map((step) => step.unitId), ...article.units.map((entry) => entry.id)])];
   const index = orderedIds.indexOf(unit.id);
+  if (index >= 0) navigation.append(node('p', 'survey-unit-progress', `第 ${index + 1} / ${orderedIds.length} 部分`));
   const previous = article.units.find((entry) => entry.id === orderedIds[index - 1]);
   const next = article.units.find((entry) => entry.id === orderedIds[index + 1]);
   const links = node('div', 'survey-unit-next-links');
-  if (previous) links.append(link(unitHash(article.id, previous.id), `← 上一部分：${previous.title}`));
-  if (next) links.append(link(unitHash(article.id, next.id), `下一部分：${next.title} →`));
+  if (previous) links.append(renderUnitJump(unitHash(article.id, previous.id), '上一部分', previous.title, 'prev'));
+  if (next) links.append(renderUnitJump(unitHash(article.id, next.id), '下一部分', next.title, 'next'));
   navigation.append(links);
   navigation.append(link(hash(article.id), '回到图中选择其他内容', 'survey-back'));
   root.append(navigation);
@@ -270,6 +339,12 @@ function renderShelf(root) {
     card.append(link(hash(article.id), article.displayTitle, 'survey-shelf-card-title'));
     card.append(node('p', 'survey-shelf-meta', `${article.venue} · ${article.year}`));
     card.append(node('p', 'survey-shelf-summary', article.shelfLead ?? article.brief));
+    card.addEventListener('click', (event) => {
+      if (event.target.closest('a, button')) return;
+      const selected = window.getSelection?.();
+      if (selected && String(selected).length > 0) return;
+      card.querySelector('a')?.click();
+    });
     list.append(card);
   }
   root.append(list);
@@ -361,7 +436,7 @@ function renderShelf(root) {
   root.append(request);
   const note = node('section', 'survey-request-note');
   note.append(node('h2', null, '来源与状态说明'));
-  note.append(node('p', null, '三篇 PDF 均保留在本机原目录，项目不复制或托管全文。为补充解析两篇已发表论文，曾将其 PDF 提交 MinerU 云端解析指定页；该接口接收完整 PDF，所选页范围限制的是解析输出，并非上传范围。未提交第三篇候选或私人未发表材料。两篇阅读稿仍因关键图表的视觉核验未完成而保持 partial；第三篇尚未制作全文讲解。'));
+  note.append(node('p', null, '三篇 PDF 均保留在本机原目录，项目不复制或托管全文。为补充解析，曾将三篇已发表/公开预印本 PDF 提交 MinerU 云端解析指定页；该接口接收完整 PDF，所选页范围限制的是解析输出，并非上传范围。未提交私人或未发表材料。三篇阅读稿均因关键图表的视觉核验未完成而保持 partial。'));
   note.append(link('#/map', '查看背景知识地图', 'survey-background-link'));
   root.append(note);
 }

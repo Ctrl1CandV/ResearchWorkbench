@@ -4237,7 +4237,7 @@ function renderRouteTracks(page, direction, tracks) {
 function renderLearnerBlock(article, item, kind = 'paper') {
   const learner = item?.learner;
   if (!learner || typeof learner !== 'object') return;
-  const box = el('section', 'lib-block');
+  const box = el('section', 'lib-block lib-learner');
   const lines = [
     ['讲什么', learner.gist],
     ['对当前路线的价值', learner.value],
@@ -4324,9 +4324,11 @@ function renderGuidedReading(article, paper) {
     box.appendChild(dl);
   }
   if (Array.isArray(guided.preQuestions) && guided.preQuestions.length > 0) {
-    const q = el('p', 'lib-step-line');
-    q.appendChild(el('strong', 'lib-step-label', '带着这些问题读：'));
-    q.appendChild(document.createTextNode(guided.preQuestions.join('　')));
+    const q = el('div', 'lib-guided-questions');
+    q.appendChild(el('p', 'lib-step-label', '带着这些问题读：'));
+    const list = el('ul', 'lib-list');
+    for (const question of guided.preQuestions) list.appendChild(el('li', null, question));
+    q.appendChild(list);
     box.appendChild(q);
   }
   // ② 原文精读定位（无正文依据时降级为两段并标注）
@@ -4569,6 +4571,12 @@ function paperListItem(paper) {
     item.appendChild(el('p', 'lib-paper-status', `我的状态：${V3_STATUS_LABELS[record.status]}（本人标记）`));
   }
   if (paper.lead) item.appendChild(el('p', 'lib-paper-lead', paper.lead));
+  item.addEventListener('click', (event) => {
+    if (event.target.closest('a, button')) return;
+    const selected = window.getSelection?.();
+    if (selected && String(selected).length > 0) return;
+    title.querySelector('a')?.click();
+  });
   return item;
 }
 
@@ -4627,8 +4635,12 @@ function renderPapers(container) {
 
 function paperHeader(paper) {
   const wrap = el('header', 'lib-paper-head');
-  wrap.appendChild(el('h2', 'lib-paper-heading', paper.title));
-  if (paper.displayTitle) wrap.appendChild(el('p', 'lib-paper-subtitle', paper.displayTitle));
+  if (paper.displayTitle && paper.displayTitle !== paper.title) {
+    wrap.appendChild(el('h2', 'lib-paper-heading', paper.displayTitle));
+    wrap.appendChild(el('p', 'lib-paper-subtitle', paper.title));
+  } else {
+    wrap.appendChild(el('h2', 'lib-paper-heading', paper.title));
+  }
   const meta = el('p', 'lib-metaline');
   meta.appendChild(document.createTextNode(paperBadges(paper).map((b) => b.text).join(' · ')));
   const publication = paperPublicationLabel(paper);
@@ -4768,12 +4780,49 @@ function renderCoverage(article, paper) {
   article.appendChild(details);
 }
 
+let paperTocObserver = null;
+
+function markPaperToc(buttons, id) {
+  for (const button of buttons) {
+    const on = button.dataset.target === id;
+    button.classList.toggle('is-current', on);
+    if (on) button.setAttribute('aria-current', 'true');
+    else button.removeAttribute('aria-current');
+  }
+}
+
+function bindPaperToc(page) {
+  paperTocObserver?.disconnect();
+  paperTocObserver = null;
+  if (typeof IntersectionObserver !== 'function') return;
+  const buttons = [...page.querySelectorAll('.lib-toc-link')];
+  const targets = buttons.map((button) => document.getElementById(button.dataset.target)).filter(Boolean);
+  if (!targets.length) return;
+  const pick = () => {
+    const visible = targets.filter((target) => target.dataset.paperVisible === '1');
+    const current = visible[0] ?? [...targets].reverse().find((target) => target.getBoundingClientRect().top < 96) ?? targets[0];
+    if (!current || current.id === page.dataset.tocCurrent) return;
+    page.dataset.tocCurrent = current.id;
+    markPaperToc(buttons, current.id);
+  };
+  paperTocObserver = new IntersectionObserver((entries) => {
+    for (const entry of entries) entry.target.dataset.paperVisible = entry.isIntersecting ? '1' : '0';
+    pick();
+  }, { rootMargin: '0px 0px -68% 0px', threshold: 0 });
+  for (const target of targets) paperTocObserver.observe(target);
+  pick();
+}
+
 function tocButton(targetId, label) {
   const button = el('button', 'lib-toc-link', label);
   button.type = 'button';
+  button.dataset.target = targetId;
   button.addEventListener('click', () => {
     const target = document.getElementById(targetId);
-    if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    if (!target) return;
+    const nav = button.closest('.lib-toc');
+    if (nav) markPaperToc([...nav.querySelectorAll('.lib-toc-link')], targetId);
+    target.scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
   return button;
 }
@@ -4956,6 +5005,7 @@ function renderPaper(container, paperId, ctx = {}) {
   article.appendChild(renderNotesPanel(paper));
   renderCoverage(article, paper);
   renderRail(page, paper, positions, source);
+  bindPaperToc(page);
 }
 
 // ---------- 材料（SCAFFOLD-008；03 §3/§6：只读、无个人记录、无 localStorage 写入） ----------

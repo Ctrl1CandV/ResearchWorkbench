@@ -29,10 +29,15 @@ test('SURVEY-013 只按真实进度区分候选与部分阅读包，不伪装为
   assert.equal(second.state, 'partial');
   assert.ok(second.units.some((unit) => unit.id === 'fcs-memory-design'));
   assert.equal(second.units.find((unit) => unit.id === 'fcs-memory-design').graph.axes.length, 3);
-  const candidate = SURVEYS.articles[2];
-  assert.equal(candidate.state, 'candidate');
-  assert.ok(!('units' in candidate), 'unread candidate must not expose empty/fictional teaching units');
-  for (const article of SURVEYS.articles.filter((item) => item.state !== 'candidate')) for (const unit of article.units) {
+  const third = SURVEYS.articles[2];
+  assert.equal(third.state, 'partial');
+  assert.ok(third.units.some((unit) => unit.id === 'rise-perception-action'));
+  assert.equal(third.units.find((unit) => unit.id === 'rise-perception-action').graph.axes.length, 3);
+  assert.ok(third.coverage.readSections.includes('§3.1'));
+  assert.ok(third.coverage.taughtSections.includes('§7'));
+  assert.ok(third.coverage.notYetTaught.some((section) => section.includes('References')));
+  assert.equal(third.coverage.visualFiguresAndTables.length > 0, true);
+  for (const article of SURVEYS.articles) for (const unit of article.units) {
     assert.ok(unit.lead && unit.blocks.length >= 3);
     assert.ok(unit.blocks.every((block) => block.text || (block.headers && block.rows)), 'blocks must contain prose or structured comparison data');
   }
@@ -50,7 +55,7 @@ test('综述单元可深链；文章间互补关系有两端单元锚点', () =>
   assert.deepEqual(parseHash('#/survey/survey-agent-evaluation-2026/unit/separate-model-harness'), {
     view: 'survey', id: 'survey-agent-evaluation-2026', unitId: 'separate-model-harness',
   });
-  assert.equal(SURVEYS.relations.length, 1);
+  assert.equal(SURVEYS.relations.length, 3);
   assert.equal(SURVEYS.relations[0].kind, 'complements');
   assert.ok(SURVEYS.relations[0].fromUnitIds.length > 0);
   assert.ok(SURVEYS.relations[0].toUnitIds.length > 0);
@@ -126,4 +131,11 @@ test('阅读样板保留实际分类、机制及例子，不只验证字数', ()
   const harness = SURVEYS.articles[0].units.find((u) => u.id === 'separate-model-harness');
   assert.equal(harness.blocks.find((b) => b.type === 'comparison').role, 'teaching-example');
   assert.ok(harness.blocks.some((b) => b.text?.includes('交互效应')));
+  const rise = SURVEYS.articles[2];
+  assert.ok(rise.units.find((u) => u.id === 'rise-scope').blocks.some((b) => b.text?.includes('World Scope')));
+  const whyLlm = rise.units.find((u) => u.id === 'rise-background').blocks.find((b) => b.type === 'comparison');
+  assert.deepEqual(whyLlm.rows.map((r) => r[0]), ['自主性', '反应性', '主动性', '社会能力']);
+  const multi = rise.units.find((u) => u.id === 'rise-practice').blocks.find((b) => b.type === 'comparison');
+  assert.deepEqual(multi.rows.map((r) => r[0]), ['无序合作', '有序合作', '对抗/辩论']);
+  assert.ok(rise.units.find((u) => u.id === 'rise-discussion').blocks.some((b) => b.text?.includes('持续演化')));
 });

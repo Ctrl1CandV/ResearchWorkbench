@@ -1,6 +1,6 @@
 # ResearchWorkbench
 
-**2026-09-29 当前工作：[SURVEY-013 综述阅读](docs/plans/SURVEY-013/README.md)**。设计已通过独立只读复核；ACL 2026 主文/附录与 FCS 2024 多章节讲解已接入，包含可操作的文章内维度图、正文锚点、读序关系、文章间互补关系和来源折叠。两篇仍为 `partial`（原图视觉核查与独立内容复核未完成），第三篇仍为候选。按本轮明确授权，两篇已发表 PDF 曾提交 MinerU Agent API，完整 PDF 被上传而解析结果仅限所选页；未上传其他或私人材料。实施进展、来源边界与下一步见 [docs/plans/SURVEY-013/IMPLEMENTATION-REPORT.md](docs/plans/SURVEY-013/IMPLEMENTATION-REPORT.md) 和 [交接工作包](docs/plans/SURVEY-013/04-implementation-handoff.md)。以下 009–011 的提交与验收叙述为历史阶段记录，不用于判断当前 Git 状态。
+**2026-09-29 当前工作：[SURVEY-013 综述阅读](docs/plans/SURVEY-013/README.md)**。设计已通过独立只读复核；ACL 2026 主文/附录与 FCS 2024 多章节讲解已接入，包含可操作的文章内维度图、正文锚点、读序关系、文章间互补关系和来源折叠。三篇均为 `partial`（原图视觉核查与独立内容复核未完成）。按明确授权，三篇公开 PDF 曾提交 MinerU Agent API，完整 PDF 被上传而解析结果仅限所选页；未上传私人材料。实施进展、来源边界与下一步见 [docs/plans/SURVEY-013/IMPLEMENTATION-REPORT.md](docs/plans/SURVEY-013/IMPLEMENTATION-REPORT.md) 和 [交接工作包](docs/plans/SURVEY-013/04-implementation-handoff.md)。以下 009–011 的提交与验收叙述为历史阶段记录，不用于判断当前 Git 状态。
 
 个人研究平台：方向阅读路线、分级论文阅读卡、Agent 技术学习主干、经典书目、每日精选与近期登记发现、本人阅读记录（仅本机，独立 v3 存储）；009 新增小型文字领域地图与本机导学提案（`#/guidance`，独立覆盖层键）；010 新增三层知识脉络（AI 背景→Agent 全景→专题）与可点击 SVG 广域脉络图（`#/map` 新主体，旧 009 地图保留为次级区）。009/010 相关改动均未提交、未推送，010 整体验收未 GO（见下）。
 
