@@ -1,8 +1,8 @@
 // server.mjs —— 仅本机服务：静态只读 + 每日发现同源 API。
 // 契约来源：docs/SPEC.md「行为规约」「每日发现固定契约」（原 DESIGN-002、
 // PLAN-003、LEGACY-AUDIT-005 的相关条款，演进记录见 docs/HISTORY.md）。
-// - 只绑定 127.0.0.1；端口默认 4173，可用 PORT 环境变量覆盖；端口冲突明确报错，
-//   不结束占用端口的进程。
+// - 默认只绑定 127.0.0.1；端口默认 4173，可用 PORT 环境变量覆盖；HOST 环境变量可
+//   覆盖绑定地址（服务器部署用 0.0.0.0）；端口冲突明确报错，不结束占用端口的进程。
 // 静态部分：
 // - 原始 URL 精确匹配固定白名单（/、/index.html、/styles.css、/library.js、
 //   /library-content.js、/content/ 八个数据模块、/learning/multiagent-lab.md、/notes.js、
@@ -17,7 +17,9 @@
 //   额外参数/重复参数/编码变体一律 400；真实上游行为由 discovery.mjs 提供，
 //   可注入发现服务以便隔离测试。
 // 通用：
-// - Host 仅允许 127.0.0.1:<实际端口>，否则 403；仅 GET/HEAD（API 仅 GET）。
+// - Host 白名单：127.0.0.1:<实际端口> 恒放行（服务器本机 curl 自检用）；ALLOWED_HOSTS
+//   环境变量可追加主机/IP（逗号分隔，不含端口与协议，按实际端口匹配）；其余一律 403
+//   （防 DNS rebinding 的白名单思路保留，不因对外部署放开）。仅 GET/HEAD（API 仅 GET）。
 // - 安全响应头：CSP self（connect-src 'self' 以允许同源 API）、nosniff、no-store、
 //   Referrer-Policy no-referrer。
 // - 不接收任何写入数据；错误响应不回显请求路径；服务密钥/个人记录无访问接口。
@@ -32,6 +34,7 @@ import { createDiscoveryService, DiscoveryError, TOPICS } from './discovery.mjs'
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export const DEFAULT_PORT = 4173;
+// 默认绑定地址（仅本机）；HOST 环境变量可覆盖，见 resolveHostConfig。
 export const BIND_HOST = '127.0.0.1';
 export const DISCOVERY_PATH = '/api/discover';
 
@@ -88,6 +91,46 @@ export function resolvePortConfig(env = process.env) {
     throw new Error(`PORT 环境变量必须是 1-65535 的整数字符串，当前为：${JSON.stringify(raw)}`);
   }
   return port;
+}
+
+// 绑定地址解析：默认 127.0.0.1（仅本机）；HOST 必须是主机名或 IP 字面量
+//（不含空白、斜杠、协议），否则启动即失败。
+export function resolveHostConfig(env = process.env) {
+  const raw = env.HOST;
+  if (raw === undefined || raw === '') return BIND_HOST;
+  if (typeof raw !== 'string' || !/^[0-9A-Za-z.:\[\]-]+$/.test(raw)) {
+    throw new Error(
+      `HOST 环境变量必须是主机名或 IP（不含空白、斜杠、协议），当前为：${JSON.stringify(raw)}`,
+    );
+  }
+  return raw.toLowerCase();
+}
+
+// Host 白名单解析：ALLOWED_HOSTS 是逗号分隔的主机名/IP（不含端口、协议、通配符）；
+// 未设置或空 = 仅回环。畸形条目启动即失败，不静默忽略。IPv6 字面量暂不支持
+//（Host 头形如 [::1]:port，与不含冒号的条目校验冲突；部署机走 IPv4 公网）。
+export function resolveAllowedHosts(env = process.env) {
+  const raw = env.ALLOWED_HOSTS;
+  if (raw === undefined || raw === '') return [];
+  if (typeof raw !== 'string') {
+    throw new Error(
+      `ALLOWED_HOSTS 环境变量必须是逗号分隔的主机名或 IP，当前为：${JSON.stringify(raw)}`,
+    );
+  }
+  const hosts = raw
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter((entry) => entry !== '');
+  for (const host of hosts) {
+    if (!/^[0-9A-Za-z.-]+$/.test(host)) {
+      throw new Error(
+        `ALLOWED_HOSTS 条目非法：${JSON.stringify(host)}；` +
+          '只允许主机名或 IP，不含端口、协议、通配符或空白',
+      );
+    }
+  }
+  // Host 头比较按小写进行，白名单条目在此统一归一化。
+  return hosts.map((host) => host.toLowerCase());
 }
 
 function isPercentDecodable(rawUrl) {
@@ -234,9 +277,10 @@ function createHandler(ctx) {
 }
 
 async function handleRequest(req, res, ctx) {
-  // 1) Host 校验优先：仅允许 127.0.0.1:<实际端口>（静态与 API 同样适用）。
-  const expectedHost = `${BIND_HOST}:${ctx.port}`;
-  if (String(req.headers.host ?? '').toLowerCase() !== expectedHost) {
+  // 1) Host 校验优先：回环 127.0.0.1:<实际端口> 或白名单 <主机>:<实际端口>
+  //（静态与 API 同样适用）；其余（含错误端口、localhost、随机域名）一律 403。
+  const hostHeader = String(req.headers.host ?? '').toLowerCase();
+  if (hostHeader !== `127.0.0.1:${ctx.port}` && !ctx.allowedHosts.includes(hostHeader)) {
     return respondError(req, res, 403);
   }
 
@@ -280,7 +324,7 @@ async function handleRequest(req, res, ctx) {
   }
 }
 
-export function createAppServer({ rootRealPath, port, discovery } = {}) {
+export function createAppServer({ rootRealPath, port, discovery, allowedHosts } = {}) {
   if (!rootRealPath) {
     throw new TypeError('createAppServer 需要rootRealPath（public 目录的 realpath）');
   }
@@ -291,6 +335,9 @@ export function createAppServer({ rootRealPath, port, discovery } = {}) {
     rootRealPath,
     port: port ?? 0,
     discovery: discovery ?? createDiscoveryService(),
+    // Host 白名单成品条目（<主机>:<端口>）；startServer 在拿到实际端口后回填，
+    // 直调 createAppServer 的测试可显式传入。
+    allowedHosts: Array.isArray(allowedHosts) ? allowedHosts.map((entry) => String(entry).toLowerCase()) : [],
   };
   const server = http.createServer(createHandler(ctx));
   // 暴露 ctx 供 startServer 更新实际端口（处理器闭包持有同一引用）。
@@ -298,9 +345,9 @@ export function createAppServer({ rootRealPath, port, discovery } = {}) {
   return server;
 }
 
-// 启动服务：解析 public 真实路径、绑定 127.0.0.1。
+// 启动服务：解析 public 真实路径、按 host 参数绑定（默认 127.0.0.1 仅本机）。
 // 端口冲突（EADDRINUSE）时以明确错误拒绝，不结束占用端口的进程。
-export async function startServer({ port = DEFAULT_PORT, rootDir, discovery } = {}) {
+export async function startServer({ port = DEFAULT_PORT, host = BIND_HOST, allowedHosts, rootDir, discovery } = {}) {
   const publicDir = path.resolve(rootDir ?? path.join(__dirname, 'public'));
   let rootRealPath;
   try {
@@ -313,7 +360,7 @@ export async function startServer({ port = DEFAULT_PORT, rootDir, discovery } = 
     const onError = (error) => {
       if (error?.code === 'EADDRINUSE') {
         const friendly = new Error(
-          `端口 ${port} 已被占用（${BIND_HOST}）：可能有另一个实例正在运行。` +
+          `端口 ${port} 已被占用（${host}）：可能有另一个实例正在运行。` +
             '本服务不会结束占用端口的进程，请改用 PORT 环境变量选择其他端口。',
           { cause: error },
         );
@@ -323,7 +370,7 @@ export async function startServer({ port = DEFAULT_PORT, rootDir, discovery } = 
       }
     };
     server.once('error', onError);
-    server.listen(port, BIND_HOST, () => {
+    server.listen(port, host, () => {
       server.removeListener('error', onError);
       resolve();
     });
@@ -331,9 +378,14 @@ export async function startServer({ port = DEFAULT_PORT, rootDir, discovery } = 
   const actualPort = server.address().port;
   // Host 校验使用实际监听端口（port=0 时由系统分配）；更新闭包持有的同一 ctx。
   server.ctx.port = actualPort;
+  // 白名单条目按实际端口生成；回环 127.0.0.1:<port> 在校验处恒放行，不入表。
+  server.ctx.allowedHosts = (allowedHosts ?? []).map(
+    (entry) => `${String(entry).toLowerCase()}:${actualPort}`,
+  );
   return {
     server,
     port: actualPort,
+    host,
     rootDir: rootRealPath,
     close: () => new Promise((resolve) => server.close(() => resolve())),
   };
@@ -346,9 +398,15 @@ const isMain =
 if (isMain) {
   try {
     const requestedPort = resolvePortConfig(process.env);
-    const { port, close } = await startServer({ port: requestedPort });
-    console.log(`研究导航工作台服务已启动：http://${BIND_HOST}:${port}/`);
-    console.log('仅绑定本机回环地址；每日发现仅在你点击按钮时访问 Crossref；按 Ctrl+C 停止。');
+    const host = resolveHostConfig(process.env);
+    const allowedHosts = resolveAllowedHosts(process.env);
+    const { port, close } = await startServer({ port: requestedPort, host, allowedHosts });
+    const displayHost = host === '0.0.0.0' ? '<所有网卡>' : host;
+    console.log(`研究导航工作台服务已启动：http://${displayHost}:${port}/`);
+    const whitelist = [`127.0.0.1:${port}`, ...allowedHosts.map((entry) => `${entry}:${port}`)];
+    console.log(
+      `Host 白名单：${whitelist.join('、')}；每日发现仅在你点击按钮时访问 Crossref；按 Ctrl+C 停止。`,
+    );
     process.on('SIGINT', () => {
       close().then(() => process.exit(0));
     });

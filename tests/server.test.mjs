@@ -1,6 +1,7 @@
 // tests/server.test.mjs —— HTTP 边界测试（研究导航 v2）。
-// 覆盖：静态白名单/遍历/方法、Host 校验、符号链接拒绝、安全响应头（CSP self）、
-// 端口冲突、端口配置、/api/discover 参数白名单/方法/错误映射/无 CORS。
+// 覆盖：静态白名单/遍历/方法、Host 校验（回环恒放行 + ALLOWED_HOSTS 部署白名单）、
+// 符号链接拒绝、安全响应头（CSP self）、端口冲突、端口/绑定地址配置、
+// /api/discover 参数白名单/方法/错误映射/无 CORS。
 // 服务器使用临时目录中的合成哨兵文件与 port 0（隔离端口），发现服务使用注入的假实现，
 // 不读取真实 private/，不访问真实网络。
 
@@ -11,7 +12,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { promises as fsp } from 'node:fs';
 
-import { startServer, createAppServer, resolvePortConfig, parseDiscoverRequest, DEFAULT_PORT, BIND_HOST, DISCOVERY_PATH } from '../server.mjs';
+import { startServer, createAppServer, resolvePortConfig, resolveHostConfig, resolveAllowedHosts, parseDiscoverRequest, DEFAULT_PORT, BIND_HOST, DISCOVERY_PATH } from '../server.mjs';
 import { DiscoveryError } from '../discovery.mjs';
 
 const SENTINELS = {
@@ -249,10 +250,72 @@ test('Host 非白名单时 403（静态与 API 均适用）', async () => {
       `127.0.0.1:${base.port}.`,
       'evil.example:4173',
       `[::1]:${base.port}`,
+      `203.0.113.7:${base.port}`,
     ]) {
       const res = await request(pathname, { headers: { host } });
       assert.equal(res.status, 403, `${pathname} ${host}`);
     }
+  }
+});
+
+// —— 部署模式：HOST 绑定地址与 ALLOWED_HOSTS 白名单（默认行为不变） ——
+
+test('resolveHostConfig：默认回环；HOST 覆盖；畸形值启动即失败', () => {
+  assert.equal(resolveHostConfig({}), BIND_HOST);
+  assert.equal(resolveHostConfig({ HOST: '' }), BIND_HOST);
+  assert.equal(resolveHostConfig({ HOST: '0.0.0.0' }), '0.0.0.0');
+  assert.equal(resolveHostConfig({ HOST: '203.0.113.7' }), '203.0.113.7');
+  assert.throws(() => resolveHostConfig({ HOST: '0.0.0.0 evil' }), /HOST/);
+  assert.throws(() => resolveHostConfig({ HOST: 'http://0.0.0.0' }), /HOST/);
+  assert.throws(() => resolveHostConfig({ HOST: 7 }), /HOST/);
+});
+
+test('resolveAllowedHosts：未设置为空；解析逗号分隔并去空白；畸形条目启动即失败', () => {
+  assert.deepEqual(resolveAllowedHosts({}), []);
+  assert.deepEqual(resolveAllowedHosts({ ALLOWED_HOSTS: '' }), []);
+  assert.deepEqual(resolveAllowedHosts({ ALLOWED_HOSTS: ',,' }), []);
+  assert.deepEqual(resolveAllowedHosts({ ALLOWED_HOSTS: '203.0.113.7' }), ['203.0.113.7']);
+  assert.deepEqual(resolveAllowedHosts({ ALLOWED_HOSTS: ' Example.com , 203.0.113.7 ' }), [
+    'example.com',
+    '203.0.113.7',
+  ]);
+  assert.throws(() => resolveAllowedHosts({ ALLOWED_HOSTS: 'example.com:8080' }), /非法/);
+  assert.throws(() => resolveAllowedHosts({ ALLOWED_HOSTS: 'http://example.com' }), /非法/);
+  assert.throws(() => resolveAllowedHosts({ ALLOWED_HOSTS: '*.example.com' }), /非法/);
+  assert.throws(() => resolveAllowedHosts({ ALLOWED_HOSTS: 'a b' }), /非法/);
+  assert.throws(() => resolveAllowedHosts({ ALLOWED_HOSTS: 7 }), /ALLOWED_HOSTS/);
+});
+
+test('部署模式：白名单主机+实际端口放行（大小写不敏感），回环恒放行，其余仍 403', async () => {
+  const fake = createFakeDiscovery();
+  const { close, port } = await startServer({
+    port: 0,
+    rootDir: testRoot,
+    discovery: fake,
+    allowedHosts: ['203.0.113.7', 'example.com'],
+  });
+  const call = (hostHeader) =>
+    new Promise((resolve, reject) => {
+      const req = http.request(
+        { host: BIND_HOST, port, path: '/', headers: { host: hostHeader } },
+        (res) => {
+          const chunks = [];
+          res.on('data', (c) => chunks.push(c));
+          res.on('end', () => resolve({ status: res.statusCode }));
+        },
+      );
+      req.on('error', reject);
+      req.end();
+    });
+  try {
+    assert.equal((await call(`203.0.113.7:${port}`)).status, 200, '白名单 IP+实际端口放行');
+    assert.equal((await call(`EXAMPLE.COM:${port}`)).status, 200, '白名单主机大小写不敏感');
+    assert.equal((await call(`127.0.0.1:${port}`)).status, 200, '回环恒放行（服务器本机自检）');
+    assert.equal((await call(`203.0.113.7:${port + 1}`)).status, 403, '白名单主机配错误端口仍 403');
+    assert.equal((await call(`evil.example:${port}`)).status, 403, '白名单外主机仍 403');
+    assert.equal((await call(`localhost:${port}`)).status, 403, 'localhost 不因部署模式放行');
+  } finally {
+    await close();
   }
 });
 
