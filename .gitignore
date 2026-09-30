@@ -19,3 +19,7 @@ coverage/
 .DS_Store
 Thumbs.db
 *.swp
+
+# deploy 分支专用：docs/tests 不入部署树（勿回移 main）
+docs/
+tests/
