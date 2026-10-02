@@ -3,7 +3,7 @@
 // 1) 全部视图渲染成功且文本无 undefined/NaN（防止校验遗漏字段渲染成 undefined）；
 // 2) 每篇论文的页内目录（按钮标签、目标 id）与实际渲染的章节标题逐项一致（回流项 1 的 DOM 断言）；
 // 3) 目录容器 details 的开闭随 matchMedia 变化：≤900px 默认折叠、>900px 默认展开（回流项 2）；
-// 4) 首页四区用途/用法/入口/首读/首次使用全部实际渲染，无“继续阅读”等假进度措辞；
+// 4) 首页学习顺序、真实起点、两条方向与四个主要栏目均可读可达；
 // 5) 路线页阶段提示按实际分组顺序生成（回流项 3 的 DOM 断言）。
 // 桩只实现渲染路径用到的 DOM 能力；不引入第三方依赖，不访问网络与 private/。
 
@@ -11,6 +11,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { LIBRARY } from '../public/library-content.js';
+import { SURVEYS } from '../public/content/surveys.js';
 
 // ---------- 最小 DOM 桩 ----------
 
@@ -22,17 +23,30 @@ class DomNode {
     this.dataset = {};
     this.listeners = {};
     this.textContentValue = '';
+    this.style = {};
+    this.parentNode = null;
   }
   appendChild(child) {
     if (!child) throw new Error(`appendChild 收到空节点（${this.tagName}）`);
+    child.parentNode = this;
     this.childNodes.push(child);
     return child;
+  }
+  append(...children) {
+    for (const child of children) {
+      this.appendChild(typeof child === 'string' ? document.createTextNode(child) : child);
+    }
+  }
+  replaceChildren(...children) {
+    this.childNodes = [];
+    for (const child of children) this.appendChild(child);
   }
   setAttribute(name, value) { this.attributes[name] = String(value); }
   getAttribute(name) { return this.attributes[name] ?? null; }
   removeAttribute(name) { delete this.attributes[name]; }
   addEventListener(name, fn) { (this.listeners[name] ??= []).push(fn); }
   scrollIntoView() {}
+  scrollTo(left, top) { this.scrollLeft = left; this.scrollTop = top; }
   click() {
     for (const fn of this.listeners.click ?? []) fn();
   }
@@ -43,16 +57,30 @@ class DomNode {
   querySelectorAll(selector) {
     const results = [];
     const want = String(selector).toLowerCase();
+    const edgeIndexMatch = String(selector).match(/^\[data-edge-index="(\d+)"\]$/i);
     const visit = (n) => {
       for (const c of n.childNodes ?? []) {
         if (c instanceof DomNode) {
-          if (c.tagName.toLowerCase() === want) results.push(c);
+          const matches = want.startsWith('.')
+            ? c.className.split(/\s+/).includes(want.slice(1))
+            : edgeIndexMatch
+              ? String(c.dataset.edgeIndex) === edgeIndexMatch[1]
+            : c.tagName.toLowerCase() === want;
+          if (matches) results.push(c);
           visit(c);
         }
       }
     };
     visit(this);
     return results;
+  }
+  querySelector(selector) { return this.querySelectorAll(selector)[0] ?? null; }
+  closest(selector) {
+    const wanted = String(selector).toLowerCase();
+    for (let node = this; node; node = node.parentNode) {
+      if (node.tagName.toLowerCase() === wanted) return node;
+    }
+    return null;
   }
   get className() { return this.attributes.class ?? ''; }
   set className(value) { this.attributes.class = String(value); }
@@ -114,6 +142,7 @@ function mountElement(id, tag = 'div') {
 
 const document = {
   createElement: (tag) => new DomNode(tag),
+  createElementNS: (_namespace, tag) => new DomNode(tag),
   createTextNode: (text) => new TextNode(text),
   getElementById: (id) => byId.get(id) ?? null,
   querySelectorAll: () => [],
@@ -121,7 +150,7 @@ const document = {
 };
 document.body = new DomNode('body');
 
-for (const id of ['lib-view', 'lib-quick', 'lib-notices']) mountElement(id);
+for (const id of ['lib-view', 'lib-quick']) mountElement(id);
 
 let viewportWide = true;
 let hashHandler = null;
@@ -268,6 +297,16 @@ test('渲染探针：全部视图渲染成功且无 undefined/NaN 文本', () =>
   }
 });
 
+test('READING-014（DOM）：离开综述后清理共享容器的专属样式', () => {
+  const view = byId.get('lib-view');
+  view.classList.add('survey-view'); // 模拟刚离开综述页时留下的旧状态。
+  renderAt('#/home');
+  assert.equal(view.classList.contains('survey-view'), false, '首页不得继承综述字号与宽度');
+  view.classList.add('survey-view');
+  renderAt('#/papers');
+  assert.equal(view.classList.contains('survey-view'), false, '论文库不得继承综述字号与宽度');
+});
+
 // ---------- 2) 目录与正文逐项一致（回流项 1 的 DOM 断言） ----------
 
 test('回流项1（DOM）：每篇论文的目录按钮、章节锚点、章节标题与 paperOutline 逐项一致', () => {
@@ -323,31 +362,44 @@ test('REWORK-007（DOM）：论文页正文在前——"我的记录"位于"延�
   assert.ok(text.includes('延伸阅读是整理者建议，不是本路线的下一步'), '缺延伸阅读边界说明');
 });
 
+test('READING-014（DOM）：论文只有显式路线来路才显示路线位置', () => {
+  const direct = renderAt('#/paper/beyond-frameworks');
+  assert.ok(!direct.textContent.includes('在路线中的位置'), '无来路的论文深链不推测所属方向');
+  const fromRoute = renderAt('#/paper/beyond-frameworks?route=cross-harness-collab&track=start');
+  assert.ok(fromRoute.textContent.includes('在路线中的位置'), '路线入口携带参数时显示当前步骤');
+  assert.ok(fromRoute.textContent.includes('第 2 / 5 步'), '显式上下文应显示准确位置');
+});
+
+test('READING-014（DOM）：基础材料无来路时不推测方向', () => {
+  lib.__setRenderLibrary(LIBRARY);
+  const direct = renderAt('#/material/mat-cross-harness-map');
+  assert.ok(!direct.textContent.includes('在路线中的位置'), '无来路的材料深链不推测所属方向');
+  const fromRoute = renderAt('#/material/mat-cross-harness-map?route=cross-harness-collab&track=start');
+  assert.ok(fromRoute.textContent.includes('在路线中的位置'), '路线入口保留显式路线位置');
+});
+
 // ---------- 4) 首页实际渲染 ----------
 
-test('首页（DOM）：保留四区、首读与丰富内容，删除重复的首次使用流程和维护日期', () => {
+test('首页（DOM）：学习顺序、有效起点、探索方向和栏目入口清楚可达', () => {
   const view = renderAt('#/home');
   const text = view.textContent;
-  for (const zone of LIBRARY.home.zones) {
-    for (const field of ['title', 'purpose', 'howToUse']) {
-      assert.ok(text.includes(zone[field]), `首页区 ${zone.key} 缺 ${field}`);
-    }
-    // PLAN-011 审查修复（去重仅限主推荐语义角色）：goal 区头不再渲染 entryLabel 重复入口，
-    // 首读由区内「建议从这里开始」条目承担；其余区 entryLabel 照常渲染。
-    if (zone.key !== 'goal') assert.ok(text.includes(zone.entryLabel), `首页区 ${zone.key} 缺 entryLabel`);
-  }
+  assert.equal(collectByClass(view, 'lib-learning-step').length, 3, '学习顺序应呈现三步');
+  assert.equal(collectByClass(view, 'lib-home-reader-card').length, 4, '首页应保留四个主要栏目');
+  assert.equal(collectByClass(view, 'lib-home-direction').length, 2, '首页只展示两条当前探索方向');
+  const start = collectByClass(view, 'lib-home-start')[0];
+  const focus = lib.resolveHomeFocus(LIBRARY);
+  assert.ok(start?.textContent.includes(focus.step.resolved.title), '建议起点应来自生效路线的首步');
+  assert.ok(start.textContent.includes(focus.step.purpose), '建议起点保留阅读目的');
+  assert.ok(start.textContent.includes(focus.step.check), '建议起点保留读后自检');
   assert.equal(collectByClass(view, 'lib-firstuse').length, 0, '重复的首次使用流程不再占首页空间');
   assert.ok(!text.includes('内容更新日期'), '首页不展示内容维护时间');
-  // 008.2：typed 首读为站内问题导读（材料），链到带路线上下文的材料页。
-  const startMaterial = LIBRARY.materials.find((m) => m.id === LIBRARY.home.startHere.materialId);
-  assert.ok(text.includes(startMaterial.title), '首读推荐（材料）未渲染');
-  assert.ok(text.includes('建议从这里开始'), '缺“建议从这里开始”标识');
-  const startHrefs = [];
-  walk(view, (n) => {
-    if (n.tagName === 'A' && n.attributes.href) startHrefs.push(n.attributes.href);
-  });
-  assert.ok(startHrefs.includes('#/material/mat-cross-harness-map?route=cross-harness-collab&track=start'), '首读链接应携带 route/track');
-  assert.ok(!text.includes('继续阅读'), '不得出现“继续阅读”等假进度措辞');
+  assert.ok(text.includes('建议起点'), '起点卡需要明确标出推荐性质');
+  const hrefs = collectLinks(view);
+  for (const href of ['#/surveys', '#/papers', '#/directions', '#/learn', '#/foundations']) {
+    assert.ok(hrefs.includes(href), `首页主要入口缺少 ${href}`);
+  }
+  assert.ok(hrefs.includes('#/brief'), '每日精选暂停更新后仍保留历史入口');
+  assert.ok(!text.includes('关于内容与来源'), '首页不重复展示全站制作说明');
 });
 
 // ---------- 4b) DYNAMIC-GUIDANCE-009 / B 包：首屏动线、地图、动线与生效值接缝 ----------
@@ -372,21 +424,15 @@ test('DG009-B（DOM）：首屏回答「做什么／读什么／怎么读」，�
   const prev = lib.__getV3ForTest();
   lib.__setV3ForTest('empty', { version: 3, papers: {}, readingList: [] });
   const view = renderAt('#/home');
-  const text = view.textContent;
-  const heroText = collectByClass(view, 'lib-home-focus')[0].textContent;
+  const start = collectByClass(view, 'lib-home-start')[0];
+  const startText = start.textContent;
   try {
-    for (const label of ['当前关注', '下一步', '为什么选它', '怎么读它', '我的记录']) {
-      assert.ok(text.includes(label), `首屏缺「${label}」`);
-    }
-    // 当前关注为 active order 最小的主方向；下一步为生效 startRoute 首节点（推导，非写死指针）。
-    assert.ok(text.includes('跨工具的智能体协作'), '当前关注应为主方向');
-    assert.ok(text.includes('跨工具协作：先把研究问题分清楚'), '下一步应为起步导读');
-    // cross-harness 是兴趣场景／阅读上下文，不得陈述为定稿论文题目（长期约束）。
-    assert.ok(text.includes('不是已经定稿的论文题目'), '缺「兴趣≠定稿题目」声明');
-    // 无记录时显式声明"不是你的进度"；首屏动线卡内不出现任何进度措辞。
-    assert.ok(heroText.includes('尚无阅读记录') && heroText.includes('不是你的进度'), '无记录须显式声明非进度');
+    assert.ok(startText.includes('建议起点'), '首屏需要清楚标出建议阅读入口');
+    assert.ok(startText.includes('跨工具协作：先把研究问题分清楚'), '起点应为有效路线的第一步');
+    assert.ok(startText.includes('为什么从这里开始') && startText.includes('读完试着回答'), '保留推荐理由和阅读自检');
+    // 页面不靠“进度面板”解释推荐；推荐入口仍是编辑建议，不推断本人状态。
     for (const forbidden of ['已读', '已掌握', '百分比', '连续天数', '进度 100', '完成度']) {
-      assert.ok(!heroText.includes(forbidden), `首屏动线卡出现假进度措辞：${forbidden}`);
+      assert.ok(!startText.includes(forbidden), `起点卡出现进度统计：${forbidden}`);
     }
   } finally {
     lib.__setV3ForTest(prev.kind, prev.state);
@@ -421,10 +467,10 @@ test('DG009-B（DOM）：地图未解析 ref／XSS 文本安全降级为纯文�
 });
 
 test('DG009-B（DOM）：起步动线 map→导读→论文→本人文本可走通（真实站内链接链）', () => {
-  // 首页首屏：当前关注／下一步指向导读，且给出打开地图入口。
+  // 首页首屏：推荐起点进入站内导读，综述总览保留独立入口。
   const home = renderAt('#/home');
   const homeLinks = collectLinks(home);
-  assert.ok(homeLinks.includes('#/map'), '首屏应给「打开地图」入口');
+  assert.ok(homeLinks.includes('#/surveys'), '首页应能进入综述全景');
   assert.ok(homeLinks.some((h) => h.startsWith('#/material/mat-cross-harness-map')), '首屏下一步应链到站内导读');
   // 地图页：方法节点 ref 指向论文卡（原文定位），导读本身也在图内。
   const map = renderAt('#/map');
@@ -446,12 +492,14 @@ test('DG009-B（DOM）：起步动线 map→导读→论文→本人文本可走
 
 test('DG009-B（DOM）：次级入口（精选／经典／技术／方向／材料）保留可达，不抢主动线', () => {
   const home = renderAt('#/home');
-  const secondary = collectByClass(home, 'lib-home-secondary')[0];
+  const secondary = collectByClass(home, 'lib-home-secondary-reader')[0];
   assert.ok(secondary, '缺次级入口行');
   const hrefs = collectLinks(secondary);
-  for (const need of ['#/brief', '#/foundations', '#/learn', '#/directions', '#/papers']) {
+  for (const need of ['#/brief', '#/directions', '#/guidance']) {
     assert.ok(hrefs.includes(need), `次级入口缺 ${need}`);
   }
+  const all = collectLinks(home);
+  for (const need of ['#/foundations', '#/learn', '#/papers']) assert.ok(all.includes(need), `主要栏目入口缺 ${need}`);
 });
 
 test('DG009-B（DOM）：生效值仅经 computeEffective／resolveHomeFocus 单入口（B 无覆盖层＝基线）', () => {
@@ -494,10 +542,13 @@ test('回流项3（DOM，008.2）：路线页渲染双轨——startRoute 顺序
   const iAgentless = text.indexOf('Agentless：没有 agent 循环');
   const iSweb = text.indexOf('SWE-bench：真实 GitHub issue');
   assert.ok(iRead > 0 && iTosem > iRead && iAgentless > iTosem && iSweb > iAgentless, 'startRoute 顺序错误');
-  assert.ok(text.includes('完整谱系（初期不必走）'), '缺 archive 折叠标题');
-  const collab = renderAt('#/route/cross-harness-collab').textContent;
+  assert.ok(text.includes('阅读重点：') && text.includes('读完自检：'), '起步路线需要突出当前步骤讲解');
+  const codeArchive = renderAt('#/route/code-agent-verification?section=archive').textContent;
+  assert.ok(codeArchive.includes('完整谱系（初期不必走）'), 'archive 视图保留完整谱系标题');
+  const collab = renderAt('#/route/cross-harness-collab?section=archive').textContent;
   assert.ok(collab.includes('按需查阅（不必接着读）'), '主方向 archive 标题');
-  assert.ok(collab.includes('本段到此'), '尾节点结束提示');
+  const start = renderAt('#/route/cross-harness-collab').textContent;
+  assert.ok(start.includes('本段到此'), '尾节点结束提示');
 });
 
 // ---------- 6) 经典书目（PLAN-005） ----------
@@ -513,6 +564,110 @@ test('经典书目（DOM）：四组分组渲染、组内论文齐备、标注�
   }
   assert.ok(text.includes('摘要级'), '应明示当前只有摘要级判断');
   assert.ok(!text.includes('undefined'), '经典书目渲染出 undefined');
+});
+
+test('READING-014（DOM）：论文书库按路线范围切换、搜索恢复、基础导读可回查且全量不重复', () => {
+  const view = renderAt('#/papers');
+  const scope = collectByClass(view, 'lib-paper-scope')[0];
+  const search = collectByClass(view, 'lib-paper-search')[0];
+  assert.ok(scope && search, '论文库应提供范围选择与搜索');
+  assert.equal(scope.value, 'primary', '默认先看主方向起步论文');
+  assert.ok(view.textContent.includes('Beyond Frameworks'), '主方向起步列表可扫描');
+  assert.ok(collectLinks(view).includes('#/paper/beyond-frameworks?route=cross-harness-collab&track=start'), '主方向书库入口保留路线来路');
+  assert.ok(!view.textContent.includes('Attention Is All You Need'), '基础经典单独从经典书目进入');
+
+  search.value = 'Beyond Frameworks';
+  search.listeners.input[0]();
+  assert.equal(collectByClass(view, 'lib-paper-item').length, 1, '搜索命中只保留相关条目');
+  search.value = 'no-such-paper-should-match';
+  search.listeners.input[0]();
+  assert.ok(view.textContent.includes('没有找到匹配的论文'), '空结果给出可理解提示');
+  const clear = clickFirst(view, (node) => node.textContent === '清除搜索');
+  assert.ok(clear, '空结果提供清除搜索入口');
+  clear.listeners.click[0]();
+  assert.equal(collectByClass(view, 'lib-paper-item').length, 4, '清空搜索恢复主方向起步列表');
+
+  scope.value = 'secondary';
+  scope.listeners.change[0]();
+  assert.ok(view.textContent.includes('代码智能体的修复正确性'), '可切换到第二方向起步文献');
+  assert.ok(collectLinks(view).includes('#/paper/tosem2025-acceptance?route=code-agent-verification&track=start'), '第二方向论文入口保留路线来路');
+  scope.value = 'expanded';
+  scope.listeners.change[0]();
+  assert.ok(view.textContent.includes('拓展阅读'), '拓展范围显示路线归属');
+
+  scope.value = 'all';
+  scope.listeners.change[0]();
+  const visiblePapers = collectByClass(view, 'lib-paper-item');
+  assert.equal(visiblePapers.length, LIBRARY.papers.filter((paper) => paper.collection !== 'foundations').length, '全量范围包含所有非经典论文且不重复');
+  const links = collectLinks(view);
+  for (const id of [
+    'mat-cross-harness-map', 'mat-read-empirical', 'mat-handoff-basics',
+    'mat-mech-vs-representation', 'mat-read-performance-claims',
+  ]) assert.ok(links.some((href) => href.startsWith(`#/material/${id}`)), `基础导读缺可达入口：${id}`);
+  assert.ok(links.includes('#/material/mat-cross-harness-map?route=cross-harness-collab&track=start'), '路线内材料保留上下文入口');
+});
+
+test('READING-014（DOM）：三篇补充导读从课题分析与对应阅读卡就近可达', () => {
+  lib.__setRenderLibrary(LIBRARY);
+  const topic = renderAt('#/route/cross-harness-collab?section=topic');
+  const topicLinks = collectLinks(topic);
+  assert.ok(topicLinks.includes('#/material/mat-handoff-basics'), '课题分析可打开任务接续背景导读');
+  assert.ok(topicLinks.includes('#/material/mat-mech-vs-representation'), '机制与表示对照旁可打开配套导读');
+
+  const paper = renderAt('#/paper/handoff-tax');
+  assert.ok(collectLinks(paper).includes('#/material/mat-read-performance-claims'), '数字解释旁可打开性能读数导读');
+});
+
+test('READING-014（DOM）：三篇综述都逐项呈现已核读、已讲解与未讲解范围', () => {
+  for (const article of SURVEYS.articles) {
+    const view = renderAt(`#/survey/${article.id}`);
+    const text = view.textContent;
+    assert.ok(text.includes('已核读范围') && text.includes('站内已讲解') && text.includes('尚未讲解'), `${article.id} 覆盖区分不完整`);
+    for (const section of article.coverage.readSections) assert.ok(text.includes(section), `${article.id} 缺已核读范围 ${section}`);
+    for (const section of article.coverage.taughtSections) assert.ok(text.includes(section), `${article.id} 缺已讲解范围 ${section}`);
+    for (const section of article.coverage.notYetTaught) assert.ok(text.includes(section), `${article.id} 缺尚未讲解范围 ${section}`);
+  }
+});
+
+test('READING-014（DOM）：综述图关系说明在宽屏展开、窄屏收起', () => {
+  viewportWide = true;
+  let view = renderAt(`#/survey/${SURVEYS.articles[0].id}`);
+  let related = collectByClass(view, 'survey-atlas-neighbors')[0];
+  assert.ok(related, '图谱选中内容应包含关系说明');
+  assert.equal(related.open, true, '宽屏默认展开关系说明');
+
+  viewportWide = false;
+  view = renderAt(`#/survey/${SURVEYS.articles[0].id}`);
+  related = collectByClass(view, 'survey-atlas-neighbors')[0];
+  assert.equal(related.open, false, '窄屏默认收起关系说明，避免遮挡图谱与阅读入口');
+  viewportWide = true;
+});
+
+test('READING-014（DOM）：窄屏点击关系编号会展开并定位到依据', () => {
+  viewportWide = false;
+  const view = renderAt(`#/survey/${SURVEYS.articles[0].id}`);
+  const related = collectByClass(view, 'survey-atlas-neighbors')[0];
+  const badge = collectByClass(view, 'survey-atlas-edge-badge')[0];
+  assert.ok(related && badge, '测试需要关系说明与图中关系编号');
+  assert.equal(related.open, false, '窄屏初始收起关系说明');
+  badge.listeners.click[0]();
+  assert.equal(related.open, true, '点击图中编号后自动展开依据');
+  viewportWide = true;
+});
+
+test('READING-014（DOM）：经典书目搜索保留主题分组并在无结果时可恢复', () => {
+  const view = renderAt('#/foundations');
+  const search = collectByClass(view, 'lib-paper-search')[0];
+  assert.ok(search, '经典书目应复用论文列表搜索');
+  assert.equal(collectByClass(view, 'lib-paper-item').length, LIBRARY.papers.filter((paper) => paper.collection === 'foundations').length);
+  search.value = 'Attention Is All You Need';
+  search.listeners.input[0]();
+  assert.equal(collectByClass(view, 'lib-paper-item').length, 1, '搜索后隐藏不匹配的主题组');
+  assert.ok(view.textContent.includes('架构'), '命中论文仍保留主题分组');
+  search.value = 'not-a-foundation';
+  search.listeners.input[0]();
+  assert.ok(view.textContent.includes('没有找到匹配的论文'), '经典书目空结果明确');
+  assert.ok(clickFirst(view, (node) => node.textContent === '清除搜索'), '空结果提供恢复入口');
 });
 
 // ---------- 7) 我的记录 v3（PLAN-005） ----------
@@ -547,18 +702,49 @@ test('v3（DOM）：论文页有“我的记录”面板，保存后只写 v3 �
   assert.deepEqual(badReads, [], '除 v3 与导学覆盖层键外不得触碰任何其它存储键（含 v1/v2）');
   // 保存后重渲染：论文列表显示“我的状态”
   const list = renderAt('#/papers');
+  const scope = collectByClass(list, 'lib-paper-scope')[0];
+  scope.value = 'all';
+  scope.listeners.change[0]();
   assert.ok(list.textContent.includes('我的状态：在读（本人标记）'), '列表应显示本人标记状态');
   assert.ok(list.textContent.includes('导出我的记录（Markdown）'), '缺导出按钮');
   assert.ok(list.textContent.includes('我的待读清单'), '缺待读清单区');
   assert.ok(list.textContent.includes('本人添加、未核查'), '待读清单须标注未核查');
 });
 
+test('READING-014（DOM）：记录先预览已有内容，编辑表单需主动展开', () => {
+  const previous = lib.__getV3ForTest();
+  lib.__setV3ForTest('ok', {
+    version: 3,
+    papers: {
+      'astute-rag': {
+        status: 'reading',
+        question: '原记录问题：如何区分检索误差与生成误差？',
+        note: '原记录笔记：先看召回，再看上下文组织。',
+        updatedAt: '2026-09-29T08:15:00.000Z',
+      },
+    },
+    readingList: [],
+  });
+  const view = renderAt('#/paper/astute-rag');
+  const editor = collectByClass(view, 'lib-notes-editor')[0];
+  assert.ok(editor, '缺少折叠的记录编辑区');
+  const summary = editor.childNodes.find((child) => child.tagName === 'SUMMARY');
+  assert.ok(summary?.textContent.includes('本人标记：在读'), '摘要先显示本人标记');
+  assert.ok(summary?.textContent.includes('展开编辑'), '编辑动作需要明确展开');
+  const preview = collectByClass(view, 'lib-notes-preview')[0];
+  assert.ok(preview?.textContent.includes('如何区分检索误差与生成误差？'), '完整保留原问题预览');
+  assert.ok(preview?.textContent.includes('先看召回，再看上下文组织。'), '完整保留原笔记预览');
+  assert.equal(collectByClass(editor, 'lib-notes-area').length, 2, '原编辑表单仍可从折叠区展开');
+  lib.__setV3ForTest(previous.kind, previous.state);
+});
+
 test('v3（DOM）：待读清单添加流程（https 校验与标注）', async () => {
   const view = renderAt('#/papers');
   const add = clickFirst(view, (n) => n.textContent === '加入待读');
   assert.ok(add, '缺添加按钮');
+  const form = collectByClass(view, 'lib-notes-form')[0];
   const inputs = [];
-  walk(view, (n) => {
+  walk(form, (n) => {
     if (n.tagName === 'INPUT') inputs.push(n);
   });
   assert.equal(inputs.length, 3);
@@ -576,54 +762,50 @@ test('v3（DOM）：待读清单添加流程（https 校验与标注）', async 
   assert.ok(after.textContent.includes('本人添加、未核查'), '须标注未核查');
 });
 
-test('REWORK-007 首页（DOM）：本人"在读"直达行出现在论文区（在上方 v3 保存之后仍持久）', () => {
-  const text = renderAt('#/home').textContent;
-  assert.ok(text.includes('我在读（本人标记）'), '有在读标记时首页论文区应给直达入口');
-  assert.ok(text.includes('Astute RAG'), '直达应指向标记为在读的论文');
-  assert.ok(text.includes('建议从这里开始'), '编辑建议行保留（008.2 材料首读）');
+test('READING-014 首页（DOM）：仅将本人明确标记的在读论文作为继续入口', () => {
+  const view = renderAt('#/home');
+  const start = collectByClass(view, 'lib-home-start')[0];
+  assert.ok(start.textContent.includes('继续在读：'), '本人在读记录应提供继续入口');
+  assert.ok(start.textContent.includes('Astute RAG'), '继续入口应指向本人标记的论文');
+  assert.ok(start.textContent.includes('建议起点'), '继续入口不替代编辑建议的起点');
 });
 
-test('DG009-B（DOM）：首屏"我的记录"四态各自可辨（独立 fixture，不依赖其它用例顺序）', () => {
+test('READING-014 首页（DOM）：仅展示本人手动标记的在读论文，不推断或汇总掌握状态', () => {
   const prev = lib.__getV3ForTest();
-  const recText = (v3State) => {
+  const homeState = (v3State) => {
     lib.__setV3ForTest(v3State.kind, v3State.state);
-    const hero = collectByClass(renderAt('#/home'), 'lib-home-focus')[0];
-    return hero.textContent;
+    const view = renderAt('#/home');
+    return { text: view.textContent, start: collectByClass(view, 'lib-home-start')[0]?.textContent ?? '' };
   };
   try {
-    // 无记录：显式声明"不是你的进度"。
-    let t = recText({ kind: 'empty', state: { version: 3, papers: {}, readingList: [] } });
-    assert.ok(t.includes('尚无阅读记录') && t.includes('不是你的进度'), '无记录应声明不是进度');
-    assert.ok(!t.includes('已读'), '无记录不得出现进度认定');
+    // 空记录下只显示建议起点，不另造空进度面板。
+    let state = homeState({ kind: 'empty', state: { version: 3, papers: {}, readingList: [] } });
+    assert.ok(state.start.includes('建议起点'), '无记录也应保留建议起点');
+    assert.ok(!state.start.includes('尚无阅读记录') && !state.start.includes('进度'), '不展示空进度声明');
 
-    // 只有"已读"标记（没有任何在读）：B-Q1 回归——绝不能误报"尚无记录"，也不能出现假进度。
-    t = recText({
+    // 已读状态由用户在论文阅读页维护，不在首页汇总。
+    state = homeState({
       kind: 'ok',
       state: { version: 3, papers: { 'memgpt': { status: 'done', question: '', note: '', updatedAt: '2026-09-23T00:00:00.000Z' } }, readingList: [] },
     });
-    assert.ok(t.includes('已读 1 篇'), 'done-only 应报"已读 1 篇"而非"尚无"');
-    assert.ok(!t.includes('尚无阅读记录'), 'done-only 不得误报尚无记录（B-Q1）');
-    assert.ok(!t.includes('在读'), 'done-only 不应出现"在读"计数');
-    assert.ok(t.includes('不显示百分比或连续天数'), '应声明不显示百分比/连续天数');
+    assert.ok(!state.start.includes('已读 1 篇') && !state.start.includes('MemGPT'), '不汇总或误报已读记录');
 
-    // 只有问题/笔记（状态仍是未读）：算"有记录"，不报"尚无"。
-    t = recText({
+    // 问题和笔记保留在对应论文卡，不出现在起点推荐区。
+    state = homeState({
       kind: 'ok',
       state: { version: 3, papers: { 'memgpt': { status: 'unread', question: '存储与当前输入如何区分？', note: '', updatedAt: null } }, readingList: [] },
     });
-    assert.ok(t.includes('问题／笔记 1 篇'), 'note-only 应报问题/笔记计数');
-    assert.ok(!t.includes('尚无阅读记录'), 'note-only 不得误报尚无记录（B-Q1）');
+    assert.ok(!state.start.includes('存储与当前输入如何区分'), '不把私人的问题记录拼入首页');
 
-    // 待读清单条目：也算"有记录"。
-    t = recText({
+    // 待读清单是书库中的独立对象，不当作“继续在读”。
+    state = homeState({
       kind: 'ok',
       state: { version: 3, papers: {}, readingList: [{ id: 'r1', title: '偶遇论文', url: '', note: '', addedAt: '2026-09-23T00:00:00.000Z' }] },
     });
-    assert.ok(t.includes('待读清单 1 条'), '待读清单应计入"有记录"');
-    assert.ok(!t.includes('尚无阅读记录'), '仅待读清单也不得误报尚无（B-Q1）');
+    assert.ok(!state.start.includes('继续在读') && !state.start.includes('偶遇论文'), '待读条目不被误标成在读');
 
-    // 混合：在读＋已读＋笔记，都按手动标记如实列出。
-    t = recText({
+    // 混合状态只给明确的在读项提供直达，不把其它状态混进首页。
+    state = homeState({
       kind: 'ok',
       state: {
         version: 3,
@@ -634,17 +816,15 @@ test('DG009-B（DOM）：首屏"我的记录"四态各自可辨（独立 fixture
         readingList: [],
       },
     });
-    assert.ok(t.includes('在读 1 篇') && t.includes('已读 1 篇') && t.includes('问题／笔记 1 篇'), '混合态逐项列出');
+    assert.ok(state.start.includes('Astute RAG') && state.start.includes('继续在读'), '本人在读状态可直达');
+    assert.ok(!state.start.includes('MemGPT') && !state.start.includes('已读 1 篇'), '不在首页显示已读与笔记汇总');
 
-    // 存储不可用：显式说明读不到，绝不谎称"尚无记录"。
-    t = recText({ kind: 'unavailable', state: null });
-    assert.ok(t.includes('存储不可用') && t.includes('读不到'), '不可用应说明读不到');
-    assert.ok(!t.includes('尚无阅读记录'), '不可用≠无记录（B-Q1）');
+    // 本地记录不可用/损坏时首页不推测状态，论文页保留记录处理入口。
+    state = homeState({ kind: 'unavailable', state: null });
+    assert.ok(!state.start.includes('存储不可用') && !state.start.includes('尚无阅读记录'), '不可用时不虚构状态');
 
-    // 数据损坏：显式说明未加载且未改动，绝不谎称"尚无记录"。
-    t = recText({ kind: 'corrupt', state: null });
-    assert.ok(t.includes('损坏') && t.includes('不加载'), '损坏应说明未加载（不加载）');
-    assert.ok(!t.includes('尚无阅读记录'), '损坏≠无记录（B-Q1）');
+    state = homeState({ kind: 'corrupt', state: null });
+    assert.ok(!state.start.includes('损坏') && !state.start.includes('尚无阅读记录'), '损坏时不推断本人状态');
   } finally {
     lib.__setV3ForTest(prev.kind, prev.state);
   }
@@ -1029,7 +1209,7 @@ test('008.2（DOM）：首页 typed 首读、active 过滤与延后横幅', () =
   lib.__setRenderLibrary(fixtureLib());
   const home = renderAt('#/home');
   const homeText = home.textContent;
-  assert.ok(homeText.includes('建议从这里开始'), '材料首读文案');
+  assert.ok(homeText.includes('建议起点'), '首页起点推荐文案');
   const homeLinks = collectLinks(home);
   assert.ok(homeLinks.includes('#/material/mat-map?route=collab&track=start'), '首页首读应链到带上下文的材料页');
   assert.ok(homeText.includes('跨工具协作') && homeText.includes('代码验证'), '首页应列两条 active 方向');
@@ -1059,10 +1239,18 @@ test('008.2（DOM）：路线页 startRoute 渲染、主方向 archive 标题为
   assert.ok(text.includes('跨工具协作导读') && text.includes('显示名 beyond') && text.includes('显示名 tax'), 'startRoute 三步齐备');
   assert.ok(text.includes('先分清问题'), '步骤 purpose 渲染');
   assert.ok(text.includes('必读 · 地图浏览'), '步骤元信息纯文本');
-  assert.ok(text.includes('按需查阅（不必接着读）'), '主方向 archive 标题');
   assert.ok(text.includes('本段到此') && text.includes('选一个你仍不明白的比较问题'), '末段结束与行动建议');
+  const archiveView = renderAt('#/route/collab?section=archive');
+  assert.ok(archiveView.textContent.includes('按需查阅（不必接着读）'), '主方向 archive 单独可达');
+  const selectedView = renderAt('#/route/collab?section=start&step=step-collab-2');
+  assert.ok(selectedView.textContent.includes('协作维度'), 'step query 应在详情面板选择对应步骤');
+  assert.ok(collectByClass(selectedView, 'lib-route-index-link').some((item) => item.getAttribute('aria-current') === 'step'), '当前步骤有语义化选中标记');
+  const invalidStep = renderAt('#/route/collab?step=removed-step');
+  assert.ok(invalidStep.textContent.includes('已回到本段第一步'), '已失效步骤回退到本段第一步并提示');
+  const topicView = renderAt('#/route/collab?section=topic');
+  assert.ok(topicView.textContent.includes('理解课题'), '课题分析作为独立视图可达');
   const codeView = renderAt('#/route/code-verify');
-  assert.ok(codeView.textContent.includes('完整谱系（初期不必走）'), '第二方向 archive 标题沿用');
+  assert.ok(renderAt('#/route/code-verify?section=archive').textContent.includes('完整谱系（初期不必走）'), '第二方向 archive 标题沿用');
   lib.__setRenderLibrary(LIBRARY);
 });
 
@@ -1187,7 +1375,7 @@ test('DG009-C（DOM 全链路）：粘贴→预览（不落盘）→采纳写入
   await findButton(view, '确认并写入').listeners.click[0]();
   assert.equal(storageCalls.filter(([op, key]) => op === 'setItem' && key === GUID.GUIDANCE_KEY).length, 1, '确认＝整份 JSON 一次写入');
   // 路线页生效＋R4 纯文本 meta 行
-  view = renderAt('#/route/cross-harness-collab');
+  view = renderAt('#/route/cross-harness-collab?section=start&step=step-collab-3');
   const routeText = view.textContent;
   assert.ok(routeText.includes('页面走查后的新目的。'), '路线页应显示生效后的目的');
   assert.ok(routeText.includes('导学调整 · AI建议 2026-09-22（本人确认）'), '缺 R4 来源 meta 行');
@@ -1205,14 +1393,14 @@ test('DG009-C（DOM 全链路）：粘贴→预览（不落盘）→采纳写入
   // 重载（新模块实例、同存储）⇒ 变化仍在（确认后再打开仍有变化，R2）
   const fresh = await import(new URL('../public/library.js?reload=1', import.meta.url).href);
   assert.ok(fresh.currentGuidanceOverlay() !== null, '新会话从存储重建覆盖层');
-  view = renderAt('#/route/cross-harness-collab');
+  view = renderAt('#/route/cross-harness-collab?section=start&step=step-collab-3');
   assert.ok(view.textContent.includes('页面走查后的新目的。'), '重载后生效变化仍在');
   // 撤销＝一次全回＋前向写入（seq+1、history 只追加）
   view = renderAt('#/guidance');
   const undoBtn = findButton(view, '撤销最近一次导学调整');
   assert.ok(undoBtn, '缺撤销按钮');
   await undoBtn.listeners.click[0]();
-  view = renderAt('#/route/cross-harness-collab');
+  view = renderAt('#/route/cross-harness-collab?section=start&step=step-collab-3');
   assert.ok(!view.textContent.includes('页面走查后的新目的。'), '撤销后应回到旧值');
   const overlay = JSON.parse(storageData.get(GUID.GUIDANCE_KEY));
   assert.equal(overlay.seq, 2, '撤销＝seq+1 前向写入');
@@ -1256,8 +1444,9 @@ test('DG009-C（DOM，R6 两规则）：示例横幅从持久字段重建、重�
   await findButton(view, '确认并写入').listeners.click[0]();
   // 规则①：example homeFocus 不驱动首页推导——当前关注仍是基线主方向，且不出导学 meta
   view = renderAt('#/home');
-  const hero = collectByClass(view, 'lib-home-focus')[0].textContent;
-  assert.ok(hero.includes('跨工具的智能体协作'), '示例 homeFocus 不得改写当前关注（R6 规则①）');
+  const hero = collectByClass(view, 'lib-home-start')[0].textContent;
+  const directionPanel = collectByClass(view, 'lib-home-direction-panel')[0].textContent;
+  assert.ok(directionPanel.includes('跨工具的智能体协作'), '示例 homeFocus 不得改写当前关注（R6 规则①）');
   assert.ok(!hero.includes('导学调整 · 导师转述'), '示例焦点不生成首屏导学 meta');
   // 规则②：地图页照常渲染＋常驻横幅
   view = renderAt('#/map');
@@ -1280,8 +1469,9 @@ test('DG009-C（DOM）：真实 homeFocus 提案生效于首屏；重置两步�
   view = byId.get('lib-view');
   await findButton(view, '确认并写入').listeners.click[0]();
   view = renderAt('#/home');
-  const hero = collectByClass(view, 'lib-home-focus')[0].textContent;
-  assert.ok(hero.includes('代码智能体的修复正确性与预算受限验证'), '真实 homeFocus 生效：当前关注切到第二条 active 方向');
+  const hero = collectByClass(view, 'lib-home-start')[0].textContent;
+  const directionPanel = collectByClass(view, 'lib-home-direction-panel')[0].textContent;
+  assert.ok(directionPanel.includes('代码智能体的修复正确性与预算受限验证'), '真实 homeFocus 生效：当前关注切到第二条 active 方向');
   assert.ok(hero.includes('怎样读实证研究'), '下一步＝该方向生效 startRoute 首节点（推导，R3）');
   assert.ok(hero.includes('导学调整 · 导师转述 2026-09-22（本人确认）'), 'R4：首屏 meta 显示导师转述（本人确认）');
   assert.ok(!hero.includes('示例 · 非真实指导'), '非示例调整不带示例横幅（此前示例焦点条目已被本条真实条目取代）');
@@ -1295,8 +1485,8 @@ test('DG009-C（DOM）：真实 homeFocus 提案生效于首屏；重置两步�
   assert.ok(confirmReset, '缺第二步确认按钮');
   await confirmReset.listeners.click[0]();
   view = renderAt('#/home');
-  const hero2 = collectByClass(view, 'lib-home-focus')[0].textContent;
-  assert.ok(hero2.includes('跨工具的智能体协作'), '重置后当前关注回基线主方向');
+  const hero2 = collectByClass(view, 'lib-home-start')[0].textContent;
+  assert.ok(collectByClass(view, 'lib-home-direction-panel')[0].textContent.includes('跨工具的智能体协作'), '重置后当前关注回基线主方向');
   assert.ok(!hero2.includes('导学调整'), '重置后不再有导学 meta');
   view = renderAt('#/map');
   assert.ok(!view.textContent.includes('走查示例节点'), 'reset 清空示例覆盖层');
@@ -1322,23 +1512,25 @@ test('DG009-C（DOM，B2）：覆盖层改写首步 purpose 后，首屏「下�
   let view = renderAt('#/guidance');
   await uiApplyProposal(view, domProposal([domSet('route-step', 'step-collab-1', 'purpose', '首屏生效的新目的。')], { id: 'prop-b2-step' }));
   view = renderAt('#/home');
-  const hero = collectByClass(view, 'lib-home-focus')[0].textContent;
-  assert.ok(hero.includes('首屏生效的新目的。'), 'B2：首屏「为什么选它」应显示生效值（此前读基线库＝修复前会显示旧文案）');
-  assert.ok(!hero.includes('先分清场景、机制、表示与传输四层'), 'B2：旧基线文案不应残留在首屏');
+  const hero = collectByClass(view, 'lib-home-start')[0].textContent;
+  const purpose = collectByClass(view, 'lib-home-start-purpose')[0].textContent;
+  assert.ok(purpose.includes('首屏生效的新目的。'), 'B2：首屏「为什么从这里开始」应显示生效值');
+  assert.ok(!purpose.includes('先分清场景、机制、表示与传输四层'), 'B2：旧目的不应残留在推荐理由里');
   assert.ok(hero.includes('导学调整 · AI建议 2026-09-22（本人确认）'), 'B2：被调整的首屏字段带 R4 来源行');
   // 复原（撤销）给下一用例干净状态
   view = renderAt('#/guidance');
   await findButton(view, '撤销最近一次导学调整').listeners.click[0]();
   view = renderAt('#/home');
-  assert.ok(collectByClass(view, 'lib-home-focus')[0].textContent.includes('先分清场景、机制、表示与传输四层'), '撤销后首屏回基线');
+  const baselinePurpose = LIBRARY.directions.find((direction) => direction.id === 'cross-harness-collab').startRoute[0].purpose;
+  assert.ok(collectByClass(view, 'lib-home-start-purpose')[0].textContent.includes(baselinePurpose), '撤销后首屏推荐理由回到当前正式基线文案');
 });
 
 test('DG009-C（DOM，B2）：仅附注（note-only）homeFocus 也给出来源行，方向不被误切', async () => {
   let view = renderAt('#/guidance');
   await uiApplyProposal(view, domProposal([domSet('home-focus', 'home', 'note', '本周只补一条附注。')], { id: 'prop-b2-note', sourceType: 'advisor' }));
   view = renderAt('#/home');
-  const hero = collectByClass(view, 'lib-home-focus')[0].textContent;
-  assert.ok(hero.includes('跨工具的智能体协作'), 'note-only 不改当前关注');
+  const hero = collectByClass(view, 'lib-home-start')[0].textContent;
+  assert.ok(collectByClass(view, 'lib-home-direction-panel')[0].textContent.includes('跨工具的智能体协作'), 'note-only 不改当前关注');
   assert.ok(hero.includes('附注：本周只补一条附注。'), 'note-only 附注应在首屏显示');
   assert.ok(hero.includes('导学调整 · 导师转述 2026-09-22（本人确认）'), 'note-only 焦点须带来源 meta 行（B2 修复项）');
   // 复原：重置两步
@@ -1347,7 +1539,7 @@ test('DG009-C（DOM，B2）：仅附注（note-only）homeFocus 也给出来源�
   view = byId.get('lib-view');
   await findButton(view, '确认重置（我已导出备份）').listeners.click[0]();
   view = renderAt('#/home');
-  assert.ok(!collectByClass(view, 'lib-home-focus')[0].textContent.includes('附注'), '重置后附注消失');
+  assert.ok(!collectByClass(view, 'lib-home-start')[0].textContent.includes('附注'), '重置后附注消失');
 });
 
 test('DG009-C（DOM，B1）：本机存储被手工塞入非白名单条目（paper:title）⇒ 按基线降级＋导学页明示损坏并保留坏档，不写盘', () => {
@@ -1399,32 +1591,28 @@ test('DG009-C（DOM，无障碍）：导学页的粘贴框与文件选择控件�
 
 // ---------- PLAN-010 内容展示深化（2026-09-24）：首页四区 / 课题页新块 / 三段式导读 / 能力映射 ----------
 
-test('PLAN-010（DOM）：首页四区齐备且各含实质文本；综述区为专题分支过渡态，不以两综述充当总览', () => {
+test('READING-014（DOM）：首页按学习动线组织，四个栏目用途和推荐入口齐备', () => {
   const view = renderAt('#/home');
   const text = view.textContent;
-  const zones = collectByClass(view, 'lib-zone');
-  assert.equal(zones.length, 4, '首页应渲染四区');
-  assert.deepEqual(LIBRARY.home.zones.map((z) => z.key), ['goal', 'survey', 'topic', 'tech']);
-  for (const key of ['阅读目标', '知识脉络', '课题深化', '技术入口']) {
-    assert.ok(text.includes(key), `首页缺区标题：${key}`);
-  }
-  // 每区必须有超出「用途+用法」的实质正文（条目/表/说明），不是纯链接列表。
-  assert.ok(text.includes('建议从这里开始'), '阅读目标区缺首读');
-  assert.ok(text.includes('站内基础导读'), '阅读目标区缺基础导读列表');
-  assert.ok(text.includes('感知前沿'), '阅读目标区缺每日精选落点');
-  for (const layer of ['AI 背景', 'Agent 全景', '专题分支']) { assert.ok(text.includes(layer), `知识脉络区缺层介绍：${layer}`); } assert.ok(collectLinks(view).includes('#/map'), '知识脉络区缺直接入口 #/map');
-  assert.ok(text.includes('专题分支综述'), '两篇综述须标注为专题分支');
-  assert.ok(text.includes('四轴编辑分析框架'), '课题深化区缺四轴浓缩');
-  assert.ok(text.includes('与研究能力的关系'), '技术入口区缺能力映射句');
-  // 旧五区入口仍可达（降级为次级入口或归并入区），不丢内容。
   const hrefs = collectLinks(view);
-  for (const need of ['#/brief', '#/foundations', '#/papers']) {
-    assert.ok(hrefs.includes(need), `旧区入口不可丢：${need}`);
+  assert.equal(collectByClass(view, 'lib-learning-step').length, 3, '三步学习动线');
+  assert.equal(collectByClass(view, 'lib-home-reader-card').length, 4, '四个栏目入口');
+  assert.equal(collectByClass(view, 'lib-home-direction').length, 2, '两条当前研究方向');
+  for (const title of ['综述阅读', '论文阅读', '技术学习', '经典书目']) {
+    assert.ok(text.includes(title), `首页缺少栏目：${title}`);
   }
+  assert.ok(text.includes('建议起点') && text.includes('读完试着回答'), '起点卡应给出推荐材料和自检');
+  assert.ok(text.includes('主方向首篇论文：Beyond Frameworks：把协作拆成四个维度'), '首页论文入口应从有效 startRoute 解析，不依赖旧 route 字段');
+  for (const need of ['#/surveys', '#/papers', '#/directions', '#/learn', '#/foundations', '#/brief']) {
+    assert.ok(hrefs.includes(need), `首页入口不可达：${need}`);
+  }
+  assert.ok(hrefs.includes('#/paper/beyond-frameworks'), '首页应提供可直达的主方向首篇论文');
+  assert.ok(text.includes('每日精选 · 暂停更新'), '精选历史入口需说明暂停更新');
+  assert.ok(!text.includes('来源与状态说明') && !text.includes('关于内容与来源'), '首页不展示重复制作说明');
 });
 
 test('PLAN-010（DOM）：课题页渲染四轴表/机制与表示/问题演化/论文联系/未定候选，实例是可点站内链接', () => {
-  const view = renderAt('#/route/cross-harness-collab');
+  const view = renderAt('#/route/cross-harness-collab?section=topic');
   const text = view.textContent;
   for (const heading of ['四轴编辑分析框架', '机制与表示', '问题演化', '论文间联系', '未定候选']) {
     assert.ok(text.includes(heading), `课题页缺块：${heading}`);
@@ -1539,13 +1727,13 @@ test('PLAN-012（DOM）：点击与键盘选节点都进入独立详情页，并
 });
 
 test('REV001（DOM）：主方向页渲染广域图相关支线预览与进入完整图入口', () => {
-  const view = renderAt('#/route/cross-harness-collab');
+  const view = renderAt('#/route/cross-harness-collab?section=topic');
   const text = view.textContent;
   assert.ok(text.includes('广域脉络中的相关支线'), '主方向页缺支线预览块');
   assert.ok(text.includes('多智能体协作'), '预览应含相关节点');
   assert.ok(collectLinks(view).includes('#/map'), '预览缺进入完整图入口');
   // 第二条方向也有自己的支线（代码智能体）。
-  const view2 = renderAt('#/route/code-agent-verification');
+  const view2 = renderAt('#/route/code-agent-verification?section=topic');
   assert.ok(view2.textContent.includes('代码智能体与软件工程应用'), 'code 方向预览应含 E5 节点');
 });
 
@@ -1561,29 +1749,20 @@ test('PLAN-012（DOM）：图下层级索引的节点入口也进入对应详情
 
 // ---------- PLAN-011 读者体验小幅优化（2026-09-24）：首页去重/单行化、课题页三级+折叠、图谱 guide 优先 ----------
 
-test('PLAN-011（DOM）：首页四区说明合并为一行且主推荐入口唯一；课题区入口不再同指路线首读', () => {
+test('READING-014（DOM）：首页主要信息按层级排布，不重复旧首页分区和说明', () => {
   const view = renderAt('#/home');
   const text = view.textContent;
-  // B1：purpose+howToUse 合并为单行（lib-zone-about），不再渲染双段。
-  assert.equal(collectByClass(view, 'lib-zone-about').length, 4, '四区各应有一行合并说明');
-  assert.equal(collectByClass(view, 'lib-zone-purpose').length, 0, '旧双段 purpose 不应再渲染');
-  // 去重仅限主推荐语义角色：「建议从这里开始」全页唯一；课题深化区入口为「课题结构与论文库」语义。
-  const starts = text.split('建议从这里开始').length - 1;
-  assert.equal(starts, 1, '「建议从这里开始」应为唯一主推荐');
-  assert.ok(text.includes('打开课题结构与论文库'), '课题深化区入口应改为课题结构语义');
-  // 审查修复 3（最小做法）：goal 区头不再重复「打开主方向路线」入口；区头链接数＝3（survey/topic/tech）。
-  const zoneEntries = collectByClass(view, 'lib-zone-entry');
-  assert.equal(zoneEntries.length, 3, 'goal 区头入口应去除，其余三区保留');
-  assert.ok(!text.includes('打开主方向路线'), 'goal 区头重复入口文案不应再渲染');
-  // goal 区内真正首读保留（「建议从这里开始」条目 + 打开导读链接）。
-  assert.ok(collectLinks(view).some((h) => h.includes('#/material/mat-cross-harness-map')), 'goal 区首读导读链接保留');
-  // 导航/回链同 URL 不禁止：topic 区入口与 goal 区首读仍可达路线页/材料页。
+  assert.equal(collectByClass(view, 'lib-zone').length, 0, '旧生产分区说明不再重复展示');
+  assert.equal(collectByClass(view, 'lib-home-reader-card').length, 4, '主要栏目数量与职责清楚');
+  assert.equal(collectByClass(view, 'lib-home-start').length, 1, '建议起点只有一个主要展示区');
+  assert.ok(!text.includes('内容更新日期') && !text.includes('关于内容与来源'), '移除与阅读无关的全站说明');
+  assert.ok(!text.includes('今日任务') && !text.includes('完成率'), '不制造打卡式进度');
   const hrefs = collectLinks(view);
-  assert.ok(hrefs.filter((h) => h === '#/route/cross-harness-collab').length >= 2, '导航同 URL 保持可达（不禁）');
+  assert.ok(hrefs.includes('#/route/cross-harness-collab'), '推荐起点附近可回到完整路线');
 });
 
 test('PLAN-011（DOM）：课题页三级排布（导读→对照→辅助来源），旧介绍默认收起可展开', () => {
-  const view = renderAt('#/route/cross-harness-collab');
+  const view = renderAt('#/route/cross-harness-collab?section=topic');
   const text = view.textContent;
   // 层级顺序：四轴/问题演化（导读）在机制与表示（对照）之前，二者在辅助来源之前。
   const iAxis = text.indexOf('四轴编辑分析框架');

@@ -20,6 +20,7 @@ import { LIBRARY } from '../public/library-content.js';
 import {
   buildHash,
   buildContextHash,
+  buildRouteHash,
   briefItemTarget,
   briefSourceLabel,
   deliveredDepthOf,
@@ -421,6 +422,10 @@ test('buildHash 与 parseHash 互逆（含需编码的 id 与首页）', () => {
     assert.equal(parsed.id, id, hash);
   }
   assert.deepEqual(parseHash(buildHash('home')), { view: 'home', id: null });
+  assert.deepEqual(parseHash(buildRouteHash('collab', { section: 'topic' })), { view: 'route', id: 'collab', section: 'topic' });
+  assert.deepEqual(parseHash(buildRouteHash('collab', { section: 'archive', stepId: 'archive/step 2' })), {
+    view: 'route', id: 'collab', section: 'archive', stepId: 'archive/step 2',
+  });
 });
 
 // ---------- 首页与方向 ----------
@@ -833,7 +838,8 @@ test('可见文案与交互入口（源码级）：首页四区、方向说明�
     '当前研究情况',
     '为什么考虑这个方向',
     '难点与不适用条件',
-    '按阶段阅读',
+    '从这里开始',
+    '理解课题',
     '可以追问的问题',
     '必学主干',
     '按需深入',
@@ -857,7 +863,7 @@ test('index.html 无内联脚本/内联样式/事件 handler 属性（CSP self �
   assert.doesNotMatch(html, /\sstyle=/, 'index.html 存在内联 style 属性');
 });
 
-test('index.html 新结构：首页导航 + 五入口 + 方向入口容器；旧版入口已退役', async () => {
+test('index.html 新结构：首页导航与方向入口保留，重复全站说明已移除', async () => {
   const html = await readPublic('index.html');
   assert.match(html, /<link rel="stylesheet" href="\/styles.css">/);
   assert.match(html, /<script type="module" src="\/library\.js"><\/script>/);
@@ -871,7 +877,7 @@ test('index.html 新结构：首页导航 + 五入口 + 方向入口容器；旧
     assert.ok(html.includes(hash), hash);
   }
   assert.match(html, /id="lib-view"/);
-  assert.match(html, /id="lib-notices"/);
+  assert.doesNotMatch(html, /id="lib-notices"|关于内容与来源/);
   // 旧版退役（LEGACY-AUDIT-005）：不得再出现指向 legacy.html 的任何链接
   assert.doesNotMatch(html, /legacy\.html/);
   assert.doesNotMatch(html, /lib-side-legacy|lib-legacy-note/);
@@ -881,7 +887,7 @@ test('index.html 新结构：首页导航 + 五入口 + 方向入口容器；旧
 
 test('styles.css：旧版段已退役（文件自新版注释起），规则全部限定 lib 作用域', async () => {
   const css = await readPublic('styles.css');
-  assert.ok(css.trimStart().startsWith('/* ===== 个人研究平台新版样式'), 'styles.css 应自新版样式注释起（旧版段已删除）');
+  assert.ok(css.trimStart().startsWith('/* ===== 个人研究平台界面样式'), 'styles.css 应自新版界面样式注释起（旧版段已删除）');
   assert.ok(!css.includes('.banner-error'), '旧版类名不应残留');
   assert.ok(!css.includes('.rec-card'), '旧版类名不应残留');
   const noComments = css.replace(/\/\*[\s\S]*?\*\//g, '').replace(/@media[^{]*\{/g, '');
@@ -896,14 +902,17 @@ test('styles.css：旧版段已退役（文件自新版注释起），规则全�
 
 test('styles.css：字体职责与关键视觉值（正文中英无衬线 18px/1.9、标题栈、按钮与侧栏显式定色）', async () => {
   const css = await readPublic('styles.css');
-  assert.match(css, /body\.lib\s*\{[^}]*--lib-side-bg:\s*#15243b/s);
-  assert.match(css, /body\.lib\s*\{[^}]*--lib-accent:\s*#0e7663/s);
+  assert.match(css, /body\.lib\s*\{[^}]*--lib-side-bg:\s*#e7eef3/s);
+  assert.match(css, /body\.lib\s*\{[^}]*--lib-accent:\s*#096c63/s);
   assert.match(css, /--lib-serif:[^;]*SimSun/);
   assert.match(css, /--lib-font-read:[^;]*Microsoft YaHei/);
-  assert.match(css, /\.lib-shell\s*\{[^}]*grid-template-columns:\s*220px/s);
+  assert.match(css, /\.lib-shell\s*\{[^}]*grid-template-columns:\s*208px/s);
   assert.match(css, /\.lib-article\s*\{[^}]*font-size:\s*18px/s);
   assert.match(css, /\.lib-article\s*\{[^}]*line-height:\s*1\.9/s);
   assert.match(css, /\.lib-article\s*\{[^}]*max-width:\s*45rem/s);
+  assert.match(css, /@media\s*\(max-width:\s*1100px\)[\s\S]*?\.survey-atlas-detail\s*\{[^}]*grid-row:\s*4;[^}]*position:\s*static;[^}]*max-height:\s*none;[^}]*overflow:\s*visible/s,
+    '窄屏章节预览应按页面流完整展开，避免遮挡图并保留阅读入口');
+  assert.match(css, /\.survey-atlas-graph-panel\s*\{[^}]*grid-row:\s*5/s, '窄屏图应排在所选章节预览之后');
   // 按钮与侧栏链接显式定色，不依赖全局 a
   assert.match(css, /\.lib-btn\s*\{[^}]*font-family:[^;]*--lib-font-ui/s);
   assert.match(css, /\.lib-btn-primary\s*\{[^}]*color:\s*#ffffff/s);
@@ -1066,9 +1075,10 @@ test('回流项2：目录容器为 details，窄屏默认折叠、桌面默认�
   assert.match(css, /@media \(max-width: 900px\)[\s\S]*?\.lib-toc-summary\s*\{[^}]*display:\s*block/s);
 });
 
-test('回流项3：阶段提示按实际分组顺序生成，不硬编码阶段序列', async () => {
+test('路线阶段：旧格式分组顺序保留，新路线索引呈现数据中的阶段', async () => {
   const source = await readPublic('library.js');
-  assert.match(source, /groups\.map\(\(g\) => g\.stage\)\.join\(' → '\)/);
+  assert.match(source, /export function routeStages\(lib, directionId\)/, '旧 route 的阶段适配器保留');
+  assert.match(source, /const flags = \[entry\.stage, entry\.required/, '新路线列表从每步数据读阶段');
   assert.doesNotMatch(source, /阶段有先后：建立问题/);
   // 008.2：真实库走双轨；旧格式回退仍按阶段分组（fixture 验证）。
   const legacy = validLibrary();
@@ -1390,6 +1400,8 @@ test('A05：hash query 往返与非法参数拒绝；无 query 旧形状不变',
     ['#/paper/tax?route=collab&track=archive', { view: 'paper', id: 'tax', routeId: 'collab', track: 'archive' }],
     ['#/learn/tech-multiagent?unit=ma-u2', { view: 'learnRoute', id: 'tech-multiagent', unitId: 'ma-u2' }],
     ['#/learn/tech-multiagent?route=collab&track=start&unit=ma-u1', { view: 'learnRoute', id: 'tech-multiagent', routeId: 'collab', track: 'start', unitId: 'ma-u1' }],
+    ['#/route/collab?section=archive&step=archive-2', { view: 'route', id: 'collab', section: 'archive', stepId: 'archive-2' }],
+    ['#/route/collab?step=step-collab-3', { view: 'route', id: 'collab', stepId: 'step-collab-3' }],
   ];
   for (const [hash, expected] of round) assert.deepEqual(parseHash(hash), expected, hash);
   const built = buildContextHash('material', 'mat map', { routeId: 'collab', track: 'start' });
@@ -1406,6 +1418,10 @@ test('A05：hash query 往返与非法参数拒绝；无 query 旧形状不变',
     '#/paper/tax?route=collab&track=start#frag',
     '#/paper/tax?%',
     '#/learn/tech-multiagent?route=collab&track=start',
+    '#/route/collab?section=unknown',
+    '#/route/collab?section=topic&step=step-collab-1',
+    '#/paper/tax?section=start',
+    '#/route/collab?section=start&section=archive',
   ];
   for (const hash of bad) assert.equal(parseHash(hash), null, hash);
   // 无 query 的旧返回形状保持 { view, id }。

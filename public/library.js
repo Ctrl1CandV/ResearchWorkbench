@@ -369,7 +369,7 @@ export function parseHash(raw) {
   return { ...parsed, ...ctx };
 }
 
-// hash 内 query 白名单：仅 route/track/unit；规则见 03 §5。
+// hash 内 query 白名单：详情来路、路线页局部视图与地图定位；规则见 03 §5。
 function parseHashQuery(qs, view) {
   if (qs === '') return null;
   const out = {};
@@ -379,7 +379,7 @@ function parseHashQuery(qs, view) {
     if (eq <= 0) return null;
     const key = pair.slice(0, eq);
     const rawValue = pair.slice(eq + 1);
-    if (!['route', 'track', 'unit', 'node', 'path', 'layout', 'y'].includes(key) || seen.has(key)) return null;
+    if (!['route', 'track', 'unit', 'section', 'step', 'node', 'path', 'layout', 'y'].includes(key) || seen.has(key)) return null;
     seen.add(key);
     let value;
     try {
@@ -391,6 +391,8 @@ function parseHashQuery(qs, view) {
     if (key === 'route') out.routeId = value;
     else if (key === 'unit') out.unitId = value;
     else if (key === 'track') out.track = value;
+    else if (key === 'section') out.section = value;
+    else if (key === 'step') out.stepId = value;
     else if (key === 'node') out.mapNodeId = value;
     else if (key === 'path') out.mapPathId = value;
     else if (key === 'layout') out.mapLayout = value;
@@ -398,7 +400,11 @@ function parseHashQuery(qs, view) {
   }
   const detailViews = ['paper', 'material', 'learnRoute'];
   const hasMapContext = ['mapNodeId', 'mapPathId', 'mapLayout', 'mapScrollY'].some((key) => out[key] !== undefined);
+  const hasRouteViewState = out.section !== undefined || out.stepId !== undefined;
   if (hasMapContext && view !== 'map') return null;
+  if (hasRouteViewState && view !== 'route') return null;
+  if (out.section !== undefined && !['start', 'topic', 'archive'].includes(out.section)) return null;
+  if (out.stepId !== undefined && out.section === 'topic') return null;
   if (out.mapLayout !== undefined && !['map', 'list'].includes(out.mapLayout)) return null;
   if (out.mapScrollY !== undefined && !/^\d{1,7}$/.test(out.mapScrollY)) return null;
   if (out.unitId !== undefined && view !== 'learnRoute') return null;
@@ -1700,8 +1706,8 @@ function externalLink(url, text) {
   return a;
 }
 
-function paperLink(paper, className) {
-  return link(buildHash('paper', paper.id), paper.displayTitle || paper.title, className);
+function paperLink(paper, className, context = {}) {
+  return link(buildContextHash('paper', paper.id, context), paper.displayTitle || paper.title, className);
 }
 
 function emptyBox(message) {
@@ -1827,7 +1833,7 @@ function v3StorageNotice() {
   return null;
 }
 
-// 论文页“我的记录”面板：状态三选 + 一个问题 + 一条笔记；显式保存，脏状态可见。
+// 论文页“我的记录”面板：先看已有记录，再按需展开编辑；保存仍沿用 v3 原链路。
 function renderNotesPanel(paper) {
   const box = el('section', 'lib-notes');
   box.appendChild(el('h3', 'lib-block-title', '我的记录'));
@@ -1838,6 +1844,30 @@ function renderNotesPanel(paper) {
   }
   const saved = v3StatusOf(paper.id) ?? { status: 'unread', question: '', note: '', updatedAt: null };
   const draft = { status: saved.status, question: saved.question ?? '', note: saved.note ?? '' };
+
+  const editor = el('details', 'lib-notes-editor');
+  const summary = el('summary', 'lib-notes-editor-summary');
+  const hasSavedRecord = Boolean(getPaperRecord(v3Runtime.state, paper.id));
+  const statusLabel = V3_STATUS_LABELS[saved.status] ?? V3_STATUS_LABELS.unread;
+  summary.appendChild(el('strong', null, hasSavedRecord ? `本人标记：${statusLabel}` : '还没有阅读记录'));
+  summary.appendChild(el('span', 'lib-notes-edit-hint', hasSavedRecord ? '展开编辑' : '添加记录'));
+  editor.appendChild(summary);
+
+  const preview = el('div', 'lib-notes-preview');
+  if (hasSavedRecord && String(saved.question ?? '').trim()) {
+    const question = el('p', 'lib-notes-preview-line');
+    question.append(el('strong', null, '我的问题：'), document.createTextNode(String(saved.question)));
+    preview.appendChild(question);
+  }
+  if (hasSavedRecord && String(saved.note ?? '').trim()) {
+    const note = el('p', 'lib-notes-preview-line');
+    note.append(el('strong', null, '我的笔记：'), document.createTextNode(String(saved.note)));
+    preview.appendChild(note);
+  }
+  if (hasSavedRecord && !preview.childNodes.length) {
+    preview.appendChild(el('p', 'lib-notes-preview-line', '还没有写问题或笔记。'));
+  }
+  if (preview.childNodes.length) box.appendChild(preview);
 
   const statusLine = el('p', 'lib-notes-status');
   statusLine.appendChild(el('span', 'lib-step-label', '状态（本人标记）：'));
@@ -1866,7 +1896,7 @@ function renderNotesPanel(paper) {
     statusButtons.set(value, button);
     statusLine.appendChild(button);
   }
-  box.appendChild(statusLine);
+  editor.appendChild(statusLine);
 
   const makeField = (labelText, placeholder, key) => {
     const label = el('label', 'lib-notes-field');
@@ -1882,8 +1912,8 @@ function renderNotesPanel(paper) {
     label.appendChild(area);
     return label;
   };
-  box.appendChild(makeField('我的问题', '读完这篇要回答的一个问题（可选）', 'question'));
-  box.appendChild(makeField('我的笔记', '自己的话记一笔（可选）', 'note'));
+  editor.appendChild(makeField('我的问题', '读完这篇要回答的一个问题（可选）', 'question'));
+  editor.appendChild(makeField('我的笔记', '自己的话记一笔（可选）', 'note'));
 
   const actions = el('p', 'lib-actions');
   const saveButton = el('button', 'lib-btn lib-btn-primary', '保存记录');
@@ -1896,8 +1926,9 @@ function renderNotesPanel(paper) {
     saveButton.disabled = false;
   });
   actions.appendChild(saveButton);
-  box.appendChild(actions);
-  box.appendChild(savedLine);
+  editor.appendChild(actions);
+  editor.appendChild(savedLine);
+  box.appendChild(editor);
   refreshDirty();
   return box;
 }
@@ -2410,7 +2441,17 @@ function renderHomeSecondaryRow() {
 }
 
 function renderHome(container) {
-  return renderHomeLegacy(container);
+  return renderHomeReader(container);
+}
+
+// 方向路线页只分享局部展示位置；省略时默认为起步路线。
+export function buildRouteHash(directionId, { section = 'start', stepId = null } = {}) {
+  const base = buildHash('route', directionId);
+  if (!['start', 'topic', 'archive'].includes(section) || (section === 'topic' && stepId)) return base;
+  if (section === 'start' && !stepId) return base;
+  const params = [`section=${encodeURIComponent(section)}`];
+  if (stepId) params.push(`step=${encodeURIComponent(stepId)}`);
+  return `${base}?${params.join('&')}`;
 }
 
 function renderHomeReader(container) {
@@ -2423,20 +2464,61 @@ function renderHomeReader(container) {
     return;
   }
 
-  page.appendChild(el('h1', 'lib-display', home.title));
-  page.appendChild(el('p', 'lib-home-lead', '沿知识脉络认识 Agent，再按自己的研究方向读论文、补技术。'));
+  page.appendChild(el('h1', 'lib-display', '开始阅读与学习'));
+  page.appendChild(el('p', 'lib-home-lead', '这里可以读综述、按研究方向读论文，也可以查经典文献和学习相关技术。初次使用时，可以从下面的导读开始。'));
+
+  const flow = el('ol', 'lib-learning-flow');
+  const flowSteps = [
+    ['先了解研究领域', '读综述，认识主要问题和概念之间的关系。', '#/surveys'],
+    ['按路线读论文', '沿起步顺序学习，每一步都有阅读目的和自检问题。', '#/directions'],
+    ['遇到需要再补基础', '查经典文献或学习相关技术，再回到正在读的问题。', '#/foundations'],
+  ];
+  flowSteps.forEach(([title, description, href], index) => {
+    const item = el('li', 'lib-learning-step');
+    item.append(el('span', 'lib-learning-index', String(index + 1).padStart(2, '0')));
+    const text = el('div', 'lib-learning-copy');
+    text.append(link(href, title), el('p', null, description));
+    item.append(text);
+    flow.append(item);
+  });
+  page.append(flow);
 
   const focus = resolveHomeFocus(renderBase);
   const start = focus.step;
+  const overlay = currentGuidanceOverlay();
   const startBox = el('section', 'lib-home-start');
-  startBox.appendChild(el('p', 'lib-zone-flag', '建议从这里开始'));
+  startBox.appendChild(el('p', 'lib-zone-flag', '建议起点'));
   if (start?.resolved) {
     const href = start.__fallback
       ? startTargetHref(renderLibrary.home?.startHere)
       : stepHref(focus.direction?.id, 'start', start) ?? start.resolved.href;
     startBox.appendChild(el('h2', 'lib-home-start-title', start.resolved.title));
     if (start.resolved.lead) startBox.appendChild(el('p', 'lib-home-start-note', start.resolved.lead));
-    startBox.appendChild(link(href ?? '#/home', '开始阅读', 'lib-btn'));
+    if (start.purpose) {
+      const purpose = el('p', 'lib-home-start-purpose');
+      purpose.append(el('strong', null, '为什么从这里开始'), document.createTextNode(start.purpose));
+      startBox.append(purpose);
+    }
+    if (start.check) {
+      const check = el('p', 'lib-home-start-check');
+      check.append(el('strong', null, '读完试着回答'), document.createTextNode(start.check));
+      startBox.append(check);
+    }
+    if (focus.noteVisible) {
+      const homeFocus = overlay?.homeFocus ?? null;
+      const source = homeFocus ? adjustLabel({ origin: homeFocus.origin, example: homeFocus.example }) : '本人确认的导学调整';
+      startBox.append(el('p', 'lib-home-start-provenance', `建议方向 · 导学调整 · ${source}${focus.focusNote ? ` · 附注：${focus.focusNote}` : ''}`));
+    }
+    const stepAdjustments = start.id
+      ? ['purpose', 'readWhen', 'check'].map((field) => overlayEntry(overlay, `route-step:${start.id}:${field}`)).filter(Boolean)
+      : [];
+    if (stepAdjustments.length) {
+      startBox.append(el('p', 'lib-home-start-provenance', `起步内容 · 导学调整 · ${[...new Set(stepAdjustments.map((entry) => adjustLabel(entry)))].join(' · ')}`));
+    }
+    const actions = el('div', 'lib-home-start-actions');
+    actions.append(link(href ?? '#/home', start.resolved.kind === 'article' ? '开始这篇导读 →' : '开始阅读 →', 'lib-btn'));
+    actions.append(link(buildHash('route', focus.direction?.id), '查看完整起步路线', 'lib-home-reader-link'));
+    startBox.append(actions);
   } else {
     startBox.appendChild(el('p', 'lib-home-start-note', '起步导读暂不可用，可从研究方向中选择入口。'));
   }
@@ -2458,13 +2540,28 @@ function renderHomeReader(container) {
     }
   }
   if (guidanceUi.pending.length > 0) {
-    startBox.appendChild(link('#/guidance', `有 ${guidanceUi.pending.length} 条待确认调整`, 'lib-home-pending'));
+    startBox.append(link('#/guidance', `有 ${guidanceUi.pending.length} 条待确认的导学调整 →`, 'lib-home-pending'));
   }
-  page.appendChild(startBox);
+
+  const directions = activeDirections(renderLibrary);
+  const directionPanel = el('section', 'lib-home-direction-panel');
+  directionPanel.append(el('h2', 'lib-home-reader-title', '两条探索方向'));
+  directionPanel.append(el('p', 'lib-home-direction-intro', '两条路线都从可读的起步材料开始；先按当前兴趣选一条，之后还可以切换。'));
+  directions.forEach((direction, index) => {
+    const row = el('article', 'lib-home-direction');
+    row.append(el('p', 'lib-zone-flag', index === 0 ? '当前主方向' : '第二方向'));
+    row.append(link(buildHash('route', direction.id), direction.title, 'lib-home-direction-title'));
+    if (direction.summary) row.append(el('p', 'lib-home-direction-summary', direction.summary));
+    directionPanel.append(row);
+  });
+  const overview = el('div', 'lib-home-overview');
+  overview.append(startBox, directionPanel);
+  page.append(overview);
 
   const cards = el('div', 'lib-home-reader-grid');
-  const card = (title, description, href, label) => {
+  const card = (title, description, href, label, className = '') => {
     const section = el('section', 'lib-home-reader-card');
+    if (className) section.classList.add(className);
     section.appendChild(el('h2', 'lib-home-reader-title', title));
     section.appendChild(el('p', 'lib-home-reader-note', description));
     section.appendChild(link(href, label, 'lib-home-reader-link'));
@@ -2472,62 +2569,37 @@ function renderHomeReader(container) {
     return section;
   };
 
-  card('综述阅读', '按文章阅读一篇综述的完整讲解、内部结构和原文定位；旧知识地图保留为背景导读。', '#/surveys', '打开综述书架');
-
-  const directions = activeDirections(renderLibrary);
-  const directionCard = card(
-    '研究方向',
-    '先看两条起步方向各自要解决什么问题，再进入对应的论文路线。',
-    '#/directions',
-    '查看研究方向',
-  );
-  const directionList = el('p', 'lib-home-reader-sub');
-  directions.forEach((direction, index) => {
-    if (index > 0) directionList.appendChild(document.createTextNode(' · '));
-    directionList.appendChild(link(buildHash('route', direction.id), direction.title));
-  });
-  directionCard.appendChild(directionList);
+  card('综述阅读', '刚接触一个领域时，从这里了解主要问题、研究分支，以及不同文章之间的联系。', '#/surveys', '查看综述全景 →', 'is-surveys');
+  const paperCard = card('论文阅读', '按研究方向选择论文。阅读卡解释研究问题、方法和贡献，并提示值得回到原文细读的部分。', '#/papers', '按起步路线选论文 →', 'is-papers');
+  if (directions[0]) {
+    const entries = directionTracks(renderLibrary, directions[0]).start;
+    const firstPaper = entries.find((entry) => entry.paper)?.paper;
+    if (firstPaper) {
+      const nextPaper = el('p', 'lib-home-reader-sub');
+      nextPaper.append(document.createTextNode('主方向首篇论文：'), paperLink(firstPaper));
+      paperCard.append(nextPaper);
+    }
+  }
 
   const techRoutes = featuredTechnicalRoutes(renderLibrary);
-  const techCard = card('技术学习', '读到论文里的方法时，再补当前需要的技术。', '#/learn', '进入技术学习');
+  const techCard = card('技术学习', '读到工具循环、检索或协作机制时，再补当前用得上的技术；不必把所有路线都当成课表。', '#/learn', '查看技术路线 →', 'is-technical');
   const techList = el('p', 'lib-home-reader-sub');
   techRoutes.forEach((route, index) => {
     if (index > 0) techList.appendChild(document.createTextNode(' · '));
     techList.appendChild(link(buildHash('learn', route.id), route.title));
   });
   techCard.appendChild(techList);
+
+  const classicCard = card('经典书目', '阅读中遇到反复出现但还不熟悉的概念，可以在这里查它们最初如何提出、后来怎样用于 Agent。', '#/foundations', '查找当前需要的基础 →', 'is-foundations');
+  const classics = foundationGroups(renderLibrary);
+  if (classics.length) classicCard.append(el('p', 'lib-home-reader-sub', `从 ${classics.slice(0, 3).map((group) => group.title).join('、')} 等主题开始查找。`));
+  page.append(el('h2', 'lib-home-sections-title', '各栏目适合什么时候使用'));
   page.appendChild(cards);
 
-  const latest = [...(renderLibrary.briefs ?? [])]
-    .filter((brief) => Array.isArray(brief.items) && brief.items.length > 0)
-    .sort((a, b) => String(b.date).localeCompare(String(a.date)))[0];
-  const briefs = el('section', 'lib-home-briefs');
-  const briefHead = el('div', 'lib-home-brief-head');
-  briefHead.appendChild(el('h2', 'lib-home-reader-title', '近期精选'));
-  if (latest) briefHead.appendChild(el('span', 'lib-res-meta', `简报期次 ${latest.date}`));
-  briefs.appendChild(briefHead);
-  if (latest) {
-    for (const item of latest.items.slice(0, 3)) {
-      const row = el('p', 'lib-home-brief-row');
-      const target = briefItemTarget(renderLibrary, item);
-      if (target?.kind === 'paper') {
-        const paper = getPaper(renderLibrary, target.paperId);
-        if (paper) row.appendChild(paperLink(paper));
-        else row.appendChild(document.createTextNode(item.title ?? item.paperId ?? ''));
-      } else if (target?.kind === 'external') row.appendChild(externalLink(target.href, briefSourceLabel(item, target.href)));
-      else row.appendChild(document.createTextNode(item.title ?? item.source ?? ''));
-      row.appendChild(el('span', 'lib-home-brief-reason', ` — ${item.reason ?? ''}`));
-      briefs.appendChild(row);
-    }
-  } else {
-    briefs.appendChild(el('p', 'lib-muted', '暂无已收录的精选条目。'));
-  }
-  briefs.appendChild(link('#/brief', '查看全部精选', 'lib-home-reader-link'));
-  page.appendChild(briefs);
-
-  const secondary = el('p', 'lib-home-secondary-reader');
-  secondary.appendChild(el('span', 'lib-focus-label', '其他入口：'));
-  const entries = [['全部论文', '#/papers'], ['经典书目', '#/foundations'], ['导学调整', '#/guidance']];
+  const secondary = el('nav', 'lib-home-secondary-reader');
+  secondary.setAttribute('aria-label', '其他入口');
+  secondary.append(el('span', 'lib-home-secondary-label', '其他入口'));
+  const entries = [['全部方向', '#/directions'], ['每日精选 · 暂停更新', '#/brief'], ['导学调整', '#/guidance']];
   entries.forEach(([label, href], index) => {
     if (index > 0) secondary.appendChild(document.createTextNode(' · '));
     secondary.appendChild(link(href, label));
@@ -3985,36 +4057,54 @@ function renderDirections(container) {
     page.appendChild(emptyBox(EMPTY_NOTICES.directions));
     return;
   }
+  const comparison = el('div', 'lib-direction-comparison');
   for (const direction of directions) {
-    const section = el('section', 'lib-panel-flat');
+    const section = el('section', 'lib-direction-compare');
     const head = el('div', 'lib-dir-head');
-    head.appendChild(el('span', 'lib-dir-num', String(direction.order)));
+    head.appendChild(el('span', 'lib-dir-num', String(direction.order).padStart(2, '0')));
     const title = el('h3', 'lib-dir-title');
     title.appendChild(link(buildHash('route', direction.id), direction.title));
     head.appendChild(title);
     section.appendChild(head);
-    if (direction.summary) section.appendChild(el('p', 'lib-dir-summary', direction.summary));
-    if (direction.overview) section.appendChild(el('p', 'lib-dir-overview', direction.overview));
+    if (direction.summary) {
+      section.appendChild(el('p', 'lib-direction-fact-label', '研究对象'));
+      section.appendChild(el('p', 'lib-dir-summary', direction.summary));
+    }
+    if (direction.whyChoose) {
+      section.appendChild(el('p', 'lib-direction-fact-label', '为什么考虑'));
+      section.appendChild(el('p', 'lib-direction-reason', direction.whyChoose));
+    }
+    const context = el('details', 'lib-direction-context');
+    context.appendChild(el('summary', null, '研究现状与限制'));
+    if (direction.stateOfField) context.appendChild(el('p', 'lib-dir-overview', direction.stateOfField));
+    if (direction.limits) {
+      const limit = el('p', 'lib-dir-overview');
+      limit.append(el('strong', null, '限制：'), document.createTextNode(direction.limits));
+      context.appendChild(limit);
+    }
+    section.appendChild(context);
+
     // 起步第一步（新 tracks 或旧 route 回退统一经 directionTracks）。
     const tracks = directionTracks(renderLibrary, direction);
-    const first = tracks.start.find((e) => e.resolved) ?? tracks.start[0] ?? null;
+    const first = tracks.start.find((entry) => entry.resolved) ?? tracks.start[0] ?? null;
     if (first) {
       const line = el('p', 'lib-first-line');
-      line.appendChild(el('strong', 'lib-step-label', '第一步：'));
+      line.appendChild(el('strong', 'lib-step-label', '从这里开始：'));
       if (first.resolved) line.appendChild(link(stepHref(direction.id, 'start', first), first.resolved.title));
       else line.appendChild(el('span', 'lib-unsafe-link', `${first.kind === 'external' ? first.title : nodeTargetKey(first.target)}（关联未解析，内容待修复）`));
       section.appendChild(line);
     }
-    const more = el('p', 'lib-dir-more');
-    more.appendChild(link(buildHash('route', direction.id), '查看完整说明与阅读路线'));
+    const more = link(buildHash('route', direction.id), '查看路线与课题分析 →', 'lib-direction-more');
     section.appendChild(more);
-    page.appendChild(section);
+    comparison.appendChild(section);
   }
-  // CCF 目录事实（D3 决策：并入方向页底部一句话事实 + 来源；不是投稿推荐）。
+  page.appendChild(comparison);
+
+  // CCF 目录事实只在读者主动展开时出现；这不是投稿推荐。
   const ccf = renderLibrary.meta?.ccfNote;
   if (ccf?.text) {
-    const box = el('div', 'lib-sources');
-    box.appendChild(el('p', 'lib-sources-title', '投稿参照（目录事实）'));
+    const box = el('details', 'lib-direction-reference');
+    box.appendChild(el('summary', null, '参考资料：CCF目录事实'));
     box.appendChild(el('p', 'lib-para', ccf.text));
     if (Array.isArray(ccf.sources)) {
       const ul = el('ul', 'lib-list');
@@ -4029,7 +4119,7 @@ function renderDirections(container) {
   }
 }
 
-function renderRoute(container, directionId) {
+function renderRoute(container, directionId, routeState = {}) {
   const direction = getDirection(renderLibrary, directionId);
   const page = el('div', 'lib-page');
   container.appendChild(page);
@@ -4092,143 +4182,138 @@ function renderRoute(container, directionId) {
   legacyIntro.appendChild(legacyBody);
   page.appendChild(legacyIntro);
 
-  // PLAN-010 阶段 C + PLAN-011 B2：深化块按 正文导读（四轴/问题演化）→ 对照表（机制与表示）→
-  // 辅助来源（核查记录/论文联系/未定候选）三级排布；页内来源说明只说一次。
-  renderDirectionDeepening(page, direction);
-
-  // 01 B：「初期怎么用这条」——纯文本一段，不是新板块。
+  // 「初期怎么用这条」紧邻起步内容；课题分析改为单独可切换的页内视图。
   if (direction.startHint) page.appendChild(el('p', 'lib-intro', direction.startHint));
 
   const tracks = directionTracks(renderLibrary, direction);
-  if (tracks.mode !== 'legacy') {
-    renderRouteTracks(page, direction, tracks);
-  } else {
-    // 旧格式回退：按阶段分组的长路线（旧库行为不变）。
-    page.appendChild(el('h3', 'lib-block-title', '按阶段阅读'));
-    const groups = routeStages(renderLibrary, directionId);
-    if (groups.length === 0) {
-      page.appendChild(emptyBox(EMPTY_NOTICES.routeEmpty));
-    } else {
-      page.appendChild(
-        el('p', 'lib-intro', `本路线阶段顺序：${groups.map((g) => g.stage).join(' → ')}。每步写明为什么读、什么时候读、读到什么程度；顺序以保持论文原有先后为准。`),
-      );
-      for (const group of groups) {
-        const stageBox = el('div', 'lib-stage');
-        stageBox.appendChild(el('p', 'lib-stage-label', group.stage));
-        const ol = el('ol', 'lib-steps');
-        for (const entry of group.entries) {
-          const li = el('li', 'lib-route-step');
-          const title = el('h4', 'lib-step-title');
-          if (entry.paper) title.appendChild(paperLink(entry.paper));
-          else title.appendChild(el('span', 'lib-unsafe-link', `${entry.paperId}（关联未解析，内容待修复）`));
-          li.appendChild(title);
-          const depth = deliveredDepthOf(entry.paper);
-          const depthShort = depth ? (depth === 'entry' ? '原文入口' : DEPTH_LABELS[depth] ?? depth) : null;
-          const flagText = [entry.required, depthShort].filter(Boolean).join(' · ');
-          if (flagText) li.appendChild(el('p', 'lib-asof', flagText));
-          for (const field of ['purpose', 'readWhen', 'check']) {
-            if (!entry[field]) continue;
-            const p = el('p', 'lib-step-line');
-            p.appendChild(el('strong', 'lib-step-label', `${STEP_LABELS[field]}：`));
-            p.appendChild(document.createTextNode(entry[field]));
-            li.appendChild(p);
-          }
-          ol.appendChild(li);
-        }
-        stageBox.appendChild(ol);
-        page.appendChild(stageBox);
-      }
-    }
+  const section = ['start', 'topic', 'archive'].includes(routeState.section) ? routeState.section : 'start';
+  const allExternal = tracks.archive.length > 0 && tracks.archive.every((entry) => entry.external);
+  const archiveLabel = direction.archiveLabel ?? (allExternal ? '按需查阅（不必接着读）' : TRACK_LABELS.archive);
+  const sections = [
+    { id: 'start', label: TRACK_LABELS.start },
+    { id: 'topic', label: '理解课题' },
+  ];
+  if (tracks.archive.length > 0) sections.push({ id: 'archive', label: archiveLabel });
+  const sectionNav = el('nav', 'lib-route-sections');
+  sectionNav.setAttribute('aria-label', '路线页内容');
+  for (const item of sections) {
+    const tab = link(buildRouteHash(direction.id, { section: item.id }), item.label, 'lib-route-section-link');
+    if (item.id === section) tab.setAttribute('aria-current', 'page');
+    sectionNav.appendChild(tab);
   }
+  page.appendChild(sectionNav);
 
-  if (Array.isArray(direction.openQuestions) && direction.openQuestions.length > 0) {
-    page.appendChild(el('h3', 'lib-block-title', '可以追问的问题'));
-    const ul = el('ul', 'lib-list');
-    for (const question of direction.openQuestions) ul.appendChild(el('li', null, question));
-    page.appendChild(ul);
-    // C 包（R3 direction append）：追加的问题在列表末尾如实出现，并带来源 meta 行（R4）。
-    const qEntry = overlayEntry(currentGuidanceOverlay(), `direction:${direction.id}:openQuestions`);
-    if (qEntry) {
-      page.appendChild(el('p', 'lib-adjust-meta', `末尾 ${Array.isArray(qEntry.value) ? qEntry.value.length : 0} 条为导学追加：${adjustLabel(qEntry)}`));
-      if (qEntry.example === true) page.appendChild(el('p', 'lib-example-mark', EXAMPLE_BANNER_TEXT));
-    }
+  if (section === 'topic') {
+    const topic = el('section', 'lib-route-topic');
+    topic.appendChild(el('h3', 'lib-block-title', '理解课题'));
+    renderDirectionDeepening(topic, direction);
+    appendDirectionQuestions(topic, direction);
+    page.appendChild(topic);
+  } else {
+    const track = section === 'archive' ? 'archive' : 'start';
+    renderRouteTrackView(page, direction, tracks[track] ?? [], track, routeState.stepId ?? null, archiveLabel);
   }
 }
 
-// 新格式（tracks）的路线渲染：startRoute 为「从这里开始」，archiveRoute 折叠。
-// archive 标题取数据 archiveLabel；缺省时外链目录（全部 external）为「按需查阅（不必接着读）」，
-// 其余为「完整谱系（初期不必走）」（05 §3）。
-function renderRouteTracks(page, direction, tracks) {
-  const allExternal = tracks.archive.length > 0 && tracks.archive.every((e) => e.external);
-  const archiveLabel = direction.archiveLabel ?? (allExternal ? '按需查阅（不必接着读）' : TRACK_LABELS.archive);
+function appendDirectionQuestions(container, direction) {
+  if (!Array.isArray(direction.openQuestions) || direction.openQuestions.length === 0) return;
+  container.appendChild(el('h3', 'lib-block-title', '可以追问的问题'));
+  const ul = el('ul', 'lib-list');
+  for (const question of direction.openQuestions) ul.appendChild(el('li', null, question));
+  container.appendChild(ul);
+  // C 包（R3 direction append）：追加的问题如实出现，并注明来自已确认的导学调整。
+  const qEntry = overlayEntry(currentGuidanceOverlay(), `direction:${direction.id}:openQuestions`);
+  if (qEntry) {
+    container.appendChild(el('p', 'lib-adjust-meta', `末尾 ${Array.isArray(qEntry.value) ? qEntry.value.length : 0} 条为导学追加：${adjustLabel(qEntry)}`));
+    if (qEntry.example === true) container.appendChild(el('p', 'lib-example-mark', EXAMPLE_BANNER_TEXT));
+  }
+}
 
-  const renderStepList = (entries, track) => {
-    const ol = el('ol', 'lib-steps');
-    for (const entry of entries) {
-      const li = el('li', 'lib-route-step');
-      const title = el('h4', 'lib-step-title');
-      if (entry.external) {
-        if (entry.url) title.appendChild(externalLink(entry.url, entry.title));
-        else title.appendChild(document.createTextNode(entry.title));
-      } else if (entry.resolved) {
-        title.appendChild(link(stepHref(direction.id, track, entry), entry.resolved.title));
-      } else {
-        title.appendChild(el('span', 'lib-unsafe-link', `${nodeTargetKey(entry.target) ?? entry.id}（关联未解析，内容待修复）`));
-      }
-      li.appendChild(title);
-      const flags = [];
-      if (entry.required) flags.push(entry.required);
-      if (entry.passMode) flags.push(PASS_MODE_LABELS[entry.passMode] ?? entry.passMode);
-      if (entry.resolved?.depthLabel) flags.push(entry.resolved.depthLabel);
-      if (entry.resolved?.formatLabel) flags.push(entry.resolved.formatLabel);
-      if (entry.external && entry.role) flags.push(entry.role);
-      if (entry.availability === 'pending') flags.push('待核');
-      const flagText = [...new Set(flags)].filter(Boolean).join(' · ');
-      if (flagText) li.appendChild(el('p', 'lib-asof', flagText));
-      if (entry.availability === 'pending') {
-        li.appendChild(el('p', 'lib-notice-flat', `待核：${entry.pendingReason ?? entry.resolved?.pendingReason ?? '原因待补'}。`));
-      }
-      for (const field of ['purpose', 'readWhen', 'check']) {
-        if (!entry[field]) continue;
-        const p = el('p', 'lib-step-line');
-        p.appendChild(el('strong', 'lib-step-label', `${STEP_LABELS[field]}：`));
-        p.appendChild(document.createTextNode(entry[field]));
-        li.appendChild(p);
-      }
-      if (entry.external && entry.note) li.appendChild(el('p', 'lib-step-line', entry.note));
-      if (entry.nextAction) li.appendChild(el('p', 'lib-step-line', entry.nextAction));
-      // C 包（R4/R6）：被覆盖层调整/新增的步骤追加纯文本 meta 行；示例条目明标示例，不冒充真实指导。
-      const stepMeta = adjustMetaFor(currentGuidanceOverlay(), 'route-step', entry.id, ['purpose', 'readWhen', 'check', 'stage', 'required', 'passMode']);
-      if (stepMeta) li.appendChild(el('p', 'lib-adjust-meta', stepMeta));
-      if (entry.example === true) li.appendChild(el('p', 'lib-example-mark', EXAMPLE_BANNER_TEXT));
-      ol.appendChild(li);
-    }
-    return ol;
-  };
-
-  page.appendChild(el('h3', 'lib-block-title', TRACK_LABELS.start));
-  if (tracks.start.length === 0) {
-    page.appendChild(emptyBox(EMPTY_NOTICES.startRouteEmpty));
-  } else {
-    page.appendChild(renderStepList(tracks.start, 'start'));
-    // 02 §3 / 03 §5.4：末节点显示本段结束与行动建议，不自动进入 archive。
-    const last = tracks.start[tracks.start.length - 1];
-    if (last?.availability !== 'pending') {
-      page.appendChild(el('p', 'lib-asof', '本段到此。'));
-    }
-    if (direction.trackClosing) page.appendChild(el('p', 'lib-intro', direction.trackClosing));
+// 路线局部状态：单页只突出一个步骤；完整顺序在左，目的/重点/自检与入口在右。
+function renderRouteTrackView(page, direction, entries, track, requestedStepId, archiveLabel) {
+  const allExternal = entries.length > 0 && entries.every((entry) => entry.external);
+  const heading = track === 'archive' ? archiveLabel : TRACK_LABELS.start;
+  page.appendChild(el('h3', 'lib-block-title', heading));
+  if (track === 'archive') {
+    page.appendChild(el('p', 'lib-zone-how', allExternal
+      ? '这些资料按问题查阅，不必顺着接着读；身份与访问情况仍以各条记录为准。'
+      : '这部分保留完整阅读谱系，起步阶段不必按顺序全部读完。'));
+  }
+  if (entries.length === 0) {
+    page.appendChild(emptyBox(track === 'start' ? EMPTY_NOTICES.startRouteEmpty : EMPTY_NOTICES.routeEmpty));
+    return;
   }
 
-  const hasArchive = tracks.archive.length > 0;
-  if (hasArchive) {
-    const details = el('details', 'lib-quick-group');
-    details.appendChild(el('summary', 'lib-quick-title', archiveLabel));
-    const note = allExternal
-      ? '以下按疑问查阅，不必接着读；identity 链接只核到身份与访问。'
-      : '完整谱系初期不必走；顺序沿原路线保留。';
-    details.appendChild(el('p', 'lib-zone-how', note));
-    details.appendChild(renderStepList(tracks.archive, 'archive'));
-    page.appendChild(details);
+  const selected = entries.find((entry) => entry.id === requestedStepId) ?? entries[0];
+  if (requestedStepId && selected.id !== requestedStepId) {
+    page.appendChild(el('p', 'lib-route-step-warning', '这一步已不在当前路线中，已回到本段第一步。'));
+  }
+  const selectedIndex = entries.indexOf(selected);
+  const layout = el('div', 'lib-route-track-layout');
+  const index = el('ol', 'lib-route-index');
+  index.setAttribute('aria-label', `${heading}步骤`);
+  for (const [position, entry] of entries.entries()) {
+    const row = el('li', 'lib-route-index-item');
+    const number = el('span', 'lib-route-index-number', String(position + 1).padStart(2, '0'));
+    const titleText = entry.resolved?.title ?? entry.title ?? nodeTargetKey(entry.target) ?? entry.id;
+    const anchor = link(buildRouteHash(direction.id, { section: track, stepId: entry.id }), titleText, 'lib-route-index-link');
+    if (entry.id === selected.id) anchor.setAttribute('aria-current', 'step');
+    row.append(number, anchor);
+    const flags = [entry.stage, entry.required, entry.resolved?.depthLabel, entry.availability === 'pending' ? '待核' : null].filter(Boolean);
+    if (flags.length) row.appendChild(el('small', 'lib-route-index-meta', [...new Set(flags)].join(' · ')));
+    index.append(row);
+  }
+
+  const detail = el('section', 'lib-route-step-detail');
+  detail.setAttribute('aria-live', 'polite');
+  detail.appendChild(el('p', 'lib-route-step-position', `${String(selectedIndex + 1).padStart(2, '0')} / ${String(entries.length).padStart(2, '0')} · ${selected.required ?? '阅读步骤'}`));
+  const title = selected.resolved?.title ?? selected.title ?? nodeTargetKey(selected.target) ?? selected.id;
+  detail.appendChild(el('h4', 'lib-route-step-title', title));
+
+  const flags = [];
+  if (selected.required) flags.push(selected.required);
+  if (selected.passMode) flags.push(PASS_MODE_LABELS[selected.passMode] ?? selected.passMode);
+  if (selected.resolved?.depthLabel) flags.push(selected.resolved.depthLabel);
+  if (selected.resolved?.formatLabel) flags.push(selected.resolved.formatLabel);
+  if (selected.external && selected.role) flags.push(selected.role);
+  if (selected.availability === 'pending') flags.push('待核');
+  if (flags.length) detail.appendChild(el('p', 'lib-route-step-flags', [...new Set(flags)].join(' · ')));
+  if (selected.availability === 'pending') {
+    detail.appendChild(el('p', 'lib-notice-flat', `待核：${selected.pendingReason ?? selected.resolved?.pendingReason ?? '原因待补'}。`));
+  }
+  for (const [field, label] of [['purpose', '为什么读'], ['readWhen', '阅读重点'], ['check', '读完自检']]) {
+    if (!selected[field]) continue;
+    const block = el('p', 'lib-route-step-copy');
+    block.append(el('strong', null, `${label}：`), document.createTextNode(selected[field]));
+    detail.append(block);
+  }
+  if (selected.external && selected.note) detail.appendChild(el('p', 'lib-route-step-copy', selected.note));
+  if (selected.nextAction) detail.appendChild(el('p', 'lib-route-step-copy', selected.nextAction));
+
+  const href = stepHref(direction.id, track, selected);
+  if (href && selected.external) {
+    const action = externalLink(href, '打开相关资料');
+    action.className = `${action.className ?? ''} lib-route-step-action`.trim();
+    detail.appendChild(action);
+  }
+  else if (href && selected.resolved) {
+    const actionLabel = selected.resolved.kind === 'article' ? '打开站内导读 →'
+      : selected.resolved.kind === 'unit' ? '学习这个单元 →' : '打开论文阅读卡 →';
+    detail.appendChild(link(href, actionLabel, 'lib-route-step-action'));
+  } else if (!selected.external) {
+    detail.appendChild(el('p', 'lib-unsafe-link', '关联内容暂不可用；不会生成无效入口。'));
+  }
+
+  const stepMeta = adjustMetaFor(currentGuidanceOverlay(), 'route-step', selected.id, ['purpose', 'readWhen', 'check', 'stage', 'required', 'passMode']);
+  if (stepMeta) detail.appendChild(el('p', 'lib-adjust-meta', stepMeta));
+  if (selected.example === true) detail.appendChild(el('p', 'lib-example-mark', EXAMPLE_BANNER_TEXT));
+  layout.append(index, detail);
+  page.append(layout);
+
+  if (track === 'start') {
+    const last = entries[entries.length - 1];
+    if (last?.availability !== 'pending') page.appendChild(el('p', 'lib-asof', '本段到此。'));
+    if (direction.trackClosing) page.appendChild(el('p', 'lib-intro', direction.trackClosing));
   }
 }
 
@@ -4257,6 +4342,14 @@ function renderLearnerBlock(article, item, kind = 'paper') {
 
 // 章节动作（03 §2）：Preserve / Explain / Skip 顺序文本列表；inline blocks 直接渲染，
 // sectionId 用与目录相同的滚动定位（不改写 hash）；空列表不显示标题。
+function appendContextPrimerLink(container, materialId, lead) {
+  const material = getMaterial(renderLibrary, materialId);
+  if (!material) return;
+  const row = el('p', 'lib-contextual-primer', `${lead} `);
+  row.appendChild(link(buildHash('material', material.id), material.title));
+  container.appendChild(row);
+}
+
 function renderReadingActionsBlock(article, item, anchorPrefix, kind = 'paper') {
   const ra = item?.readingActions;
   if (!ra || typeof ra !== 'object') return;
@@ -4301,6 +4394,9 @@ function renderReadingActionsBlock(article, item, anchorPrefix, kind = 'paper') 
     }
     box.appendChild(ul);
     article.appendChild(box);
+  }
+  if (kind === 'paper' && item.id === 'handoff-tax') {
+    appendContextPrimerLink(article, 'mat-read-performance-claims', '读这张卡里的结果数字时，可补看：');
   }
 }
 
@@ -4451,6 +4547,7 @@ function renderDirectionDeepening(page, direction) {
       ol.appendChild(li);
     }
     box.appendChild(ol);
+    appendContextPrimerLink(box, 'mat-handoff-basics', '先把任务接续的三个概念说清：');
     page.appendChild(box);
   }
 
@@ -4461,6 +4558,7 @@ function renderDirectionDeepening(page, direction) {
     if (mech.intro) box.appendChild(el('p', 'lib-para', mech.intro));
     box.appendChild(renderComparison({ columns: mech.table.columns, rows: mech.table.rows }));
     if (mech.reading) box.appendChild(el('p', 'lib-zone-how', mech.reading));
+    appendContextPrimerLink(box, 'mat-mech-vs-representation', '补看机制与表示的区别：');
     page.appendChild(box);
   }
 
@@ -4558,10 +4656,10 @@ function renderDirectionDeepening(page, direction) {
   }
 }
 
-function paperListItem(paper) {
+function paperListItem(paper, context = null) {
   const item = el('section', 'lib-paper-item');
   const title = el('h3', 'lib-paper-title');
-  title.appendChild(paperLink(paper));
+  title.appendChild(paperLink(paper, null, context ?? {}));
   item.appendChild(title);
   item.appendChild(badgeLine(paper));
   const publication = paperPublicationLabel(paper);
@@ -4578,6 +4676,175 @@ function paperListItem(paper) {
     title.querySelector('a')?.click();
   });
   return item;
+}
+
+function paperSearchText(paper) {
+  return [paper.displayTitle, paper.title, paper.lead, paper.roleReason, paper.id, paper.year, paper.venue]
+    .filter(Boolean)
+    .join(' ')
+    .toLocaleLowerCase();
+}
+
+function renderSearchablePaperGroups(page, { groupsForScope, scopes = null, emptyText }) {
+  const controls = el('div', 'lib-paper-controls');
+  const searchLabel = el('label', 'lib-paper-search-label', '搜索论文');
+  const search = el('input', 'lib-paper-search');
+  search.type = 'search';
+  search.setAttribute('aria-label', '搜索论文');
+  search.placeholder = '输入论文名或关键词';
+  searchLabel.appendChild(search);
+  controls.appendChild(searchLabel);
+
+  let scope = null;
+  if (scopes?.length) {
+    const scopeLabel = el('label', 'lib-paper-scope-label', '查看范围');
+    scope = el('select', 'lib-paper-scope');
+    scope.setAttribute('aria-label', '论文范围');
+    for (const [value, label] of scopes) {
+      const option = el('option', null, label);
+      option.value = value;
+      scope.appendChild(option);
+    }
+    scope.value = scopes[0][0];
+    scopeLabel.appendChild(scope);
+    controls.appendChild(scopeLabel);
+  }
+  page.appendChild(controls);
+
+  const summary = el('p', 'lib-paper-results-count');
+  summary.setAttribute('aria-live', 'polite');
+  const results = el('div', 'lib-paper-results');
+  page.append(summary, results);
+
+  const redraw = () => {
+    const query = String(search.value ?? '').trim().toLocaleLowerCase();
+    const groups = groupsForScope(scope?.value ?? null)
+      .map((group) => ({ ...group, papers: group.papers.filter((paper) => !query || paperSearchText(paper).includes(query)) }))
+      .filter((group) => group.papers.length > 0);
+    const count = groups.reduce((total, group) => total + group.papers.length, 0);
+    summary.textContent = count > 0 ? `共 ${count} 篇` : '没有匹配的论文';
+    results.textContent = '';
+    if (count === 0) {
+      results.appendChild(emptyBox(query ? '没有找到匹配的论文。试试论文英文标题或其他关键词。' : emptyText));
+      if (query) {
+        const clear = el('button', 'lib-paper-clear', '清除搜索');
+        clear.type = 'button';
+        clear.addEventListener('click', () => {
+          search.value = '';
+          redraw();
+          search.focus();
+        });
+        results.appendChild(clear);
+      }
+      return;
+    }
+    for (const group of groups) {
+      const box = el('section', 'lib-paper-group');
+      box.appendChild(el('h3', 'lib-block-title', group.title));
+      if (group.note) box.appendChild(el('p', 'lib-para', group.note));
+      const list = el('div', 'lib-paper-list');
+      for (const paper of group.papers) list.appendChild(paperListItem(paper, group.context));
+      box.appendChild(list);
+      results.appendChild(box);
+    }
+  };
+  search.addEventListener('input', redraw);
+  scope?.addEventListener('change', redraw);
+  redraw();
+  return { search, scope, results };
+}
+
+function routePaperGroups(scope) {
+  const allPapers = renderLibrary.papers.filter((paper) => paper.collection !== 'foundations');
+  const directions = sortDirections(renderLibrary);
+  const active = activeDirections(renderLibrary);
+  const used = new Set();
+  const collect = (direction, track) => {
+    const papers = [];
+    for (const entry of trackEntries(renderLibrary, direction.id, track)) {
+      if (!entry.paper || entry.paper.collection === 'foundations' || used.has(entry.paper.id)) continue;
+      used.add(entry.paper.id);
+      papers.push(entry.paper);
+    }
+    return papers;
+  };
+  const group = (title, papers, context = null) => ({ title, papers, context });
+
+  if (scope === 'primary') {
+    const direction = active[0];
+    return direction ? [group(`主方向 · ${direction.title}`, collect(direction, 'start'), { routeId: direction.id, track: 'start' })] : [];
+  }
+  if (scope === 'secondary') {
+    const direction = active[1];
+    return direction ? [group(`第二方向 · ${direction.title}`, collect(direction, 'start'), { routeId: direction.id, track: 'start' })] : [];
+  }
+  if (scope === 'expanded') {
+    const groups = [];
+    const activeStartIds = new Set(active.flatMap((direction) => trackEntries(renderLibrary, direction.id, 'start').filter((entry) => entry.paper).map((entry) => entry.paper.id)));
+    for (const direction of directions) {
+      const status = directionStatusOf(direction) === 'deferred' ? '延后方向' : '拓展阅读';
+      const papers = collect(direction, 'archive').filter((paper) => !activeStartIds.has(paper.id));
+       if (papers.length) groups.push(group(`${status} · ${direction.title}`, papers, { routeId: direction.id, track: 'archive' }));
+      if (directionStatusOf(direction) === 'deferred') {
+        const deferredStart = collect(direction, 'start').filter((paper) => !activeStartIds.has(paper.id));
+         if (deferredStart.length) groups.push(group(`延后方向起步文献 · ${direction.title}`, deferredStart, { routeId: direction.id, track: 'start' }));
+      }
+    }
+    const routeIds = new Set(directions.flatMap((direction) => ['start', 'archive'].flatMap((track) =>
+      trackEntries(renderLibrary, direction.id, track).filter((entry) => entry.paper).map((entry) => entry.paper.id))));
+    const outside = allPapers.filter((paper) => !routeIds.has(paper.id));
+    if (outside.length) groups.push(group('路线外条目', outside));
+    return groups;
+  }
+
+  // “全部方向论文”：按每条方向的起步与延伸顺序完整列出，最后保留未归入路线的论文。
+  const groups = [];
+  for (const direction of directions) {
+    for (const track of ['start', 'archive']) {
+      const papers = collect(direction, track);
+      if (papers.length) {
+        const prefix = directionStatusOf(direction) === 'deferred' ? '延后方向' : `方向${direction.order}`;
+         groups.push(group(`${prefix} · ${direction.title} · ${track === 'start' ? TRACK_LABELS.start : direction.archiveLabel ?? TRACK_LABELS.archive}`, papers, { routeId: direction.id, track }));
+      }
+    }
+  }
+  const outside = allPapers.filter((paper) => !used.has(paper.id));
+  if (outside.length) groups.push(group('路线外条目', outside));
+  return groups;
+}
+
+function materialContextHref(materialId) {
+  for (const direction of activeDirections(renderLibrary)) {
+    for (const track of ['start', 'archive']) {
+      const position = trackPosition(renderLibrary, direction.id, track, { kind: 'article', materialId });
+      if (position) return buildContextHash('material', materialId, { routeId: direction.id, track });
+    }
+  }
+  return buildHash('material', materialId);
+}
+
+function renderFoundationMaterials(page) {
+  const ids = [
+    'mat-cross-harness-map',
+    'mat-read-empirical',
+    'mat-handoff-basics',
+    'mat-mech-vs-representation',
+    'mat-read-performance-claims',
+  ];
+  const materials = ids.map((id) => getMaterial(renderLibrary, id)).filter(Boolean);
+  if (materials.length === 0) return;
+  const section = el('section', 'lib-foundation-materials');
+  section.appendChild(el('h3', 'lib-block-title', '基础导读'));
+  section.appendChild(el('p', 'lib-paper-group-note', '这些站内短文帮助你读懂路线中的研究问题和评价方法；需要时再补读。'));
+  const list = el('ul', 'lib-material-index');
+  for (const material of materials) {
+    const item = el('li', 'lib-material-index-item');
+    item.appendChild(link(materialContextHref(material.id), material.title));
+    if (material.lead) item.appendChild(el('p', null, material.lead));
+    list.appendChild(item);
+  }
+  section.appendChild(list);
+  page.appendChild(section);
 }
 
 function renderPapers(container) {
@@ -4603,33 +4870,17 @@ function renderPapers(container) {
     page.appendChild(emptyBox(EMPTY_NOTICES.papers));
     return;
   }
-  // 分组：方向路线文献（按方向顺序）→ 路线外条目；经典书目独立视图，这里只给入口。
-  const routed = new Set();
-  for (const direction of sortDirections(renderLibrary)) {
-    const entries = routeEntries(renderLibrary, direction.id).filter((e) => e.paper);
-    if (entries.length === 0) continue;
-    const groupBox = el('div', 'lib-paper-group');
-    groupBox.appendChild(el('h3', 'lib-block-title', `方向${direction.order} · ${direction.title}`));
-    const list = el('div', 'lib-paper-list');
-    for (const entry of entries) {
-      if (routed.has(entry.paper.id)) continue;
-      routed.add(entry.paper.id);
-      list.appendChild(paperListItem(entry.paper));
-    }
-    if (list.childNodes.length > 0) {
-      groupBox.appendChild(list);
-      page.appendChild(groupBox);
-    }
-  }
-  const unrouted = renderLibrary.papers.filter((p) => !routed.has(p.id) && p.collection !== 'foundations');
-  if (unrouted.length > 0) {
-    const groupBox = el('div', 'lib-paper-group');
-    groupBox.appendChild(el('h3', 'lib-block-title', '支线与路线外'));
-    const list = el('div', 'lib-paper-list');
-    for (const paper of unrouted) list.appendChild(paperListItem(paper));
-    groupBox.appendChild(list);
-    page.appendChild(groupBox);
-  }
+  const active = activeDirections(renderLibrary);
+  const scopes = [];
+  if (active[0]) scopes.push(['primary', '主方向起步']);
+  if (active[1]) scopes.push(['secondary', '第二方向起步']);
+  scopes.push(['expanded', '拓展与路线外'], ['all', '全部方向论文']);
+  renderSearchablePaperGroups(page, {
+    scopes,
+    groupsForScope: routePaperGroups,
+    emptyText: '当前范围没有可显示的论文。',
+  });
+  renderFoundationMaterials(page);
   page.appendChild(renderReadingList());
 }
 
@@ -4872,7 +5123,7 @@ function renderRail(page, paper, positions, source) {
       }
       block.appendChild(nextLine);
       const backLine = el('p', 'lib-rail-line');
-      backLine.appendChild(link(buildHash('route', position.direction.id), '返回路线'));
+      backLine.appendChild(link(buildRouteHash(position.direction.id, { section: position.track, stepId: position.step?.id }), '返回路线'));
       block.appendChild(backLine);
     }
     rail.appendChild(block);
@@ -4883,8 +5134,8 @@ function renderRail(page, paper, positions, source) {
 
 function renderPaper(container, paperId, ctx = {}) {
   const paper = getPaper(renderLibrary, paperId);
-  // 路线上下文（03 §5）：显式 query 优先；上下文与本文不匹配时明确提示，不静默套其他路线；
-  // 无上下文的旧链接唯一属于 active startRoute 时推导起步上下文。
+  // 路线上下文（03 §5）：只有入口显式携带 route/track 时才展示路线位置；
+  // 无来路的论文深链按普通阅读卡呈现，不推测方向。
   let routeCtx = null;
   let ctxNotice = null;
   if (ctx.routeId && ctx.track) {
@@ -4895,16 +5146,12 @@ function renderPaper(container, paperId, ctx = {}) {
       ctxNotice = '链接携带的路线上下文与本文不匹配，已按无路线上下文显示；请在路线页重新进入。';
     }
   }
-  if (!routeCtx && !ctxNotice) {
-    const inferred = inferStartContext(renderLibrary, { kind: 'paper', paperId });
-    if (inferred) routeCtx = trackPosition(renderLibrary, inferred.routeId, inferred.track, { kind: 'paper', paperId });
-  }
   const positions = routeCtx
     ? [routeCtx]
-    : routesContaining(renderLibrary, paperId);
+    : [];
   const crumbParts = [{ text: '首页', href: '#/home' }, { text: '论文阅读', href: '#/papers' }];
   if (routeCtx) {
-    crumbParts.push({ text: routeCtx.direction.title, href: buildHash('route', routeCtx.direction.id) });
+    crumbParts.push({ text: routeCtx.direction.title, href: buildRouteHash(routeCtx.direction.id, { section: routeCtx.track, stepId: routeCtx.step?.id }) });
   } else {
     for (const position of positions.slice(0, 2)) {
       crumbParts.push({ text: position.direction.title, href: buildHash('route', position.direction.id) });
@@ -5022,7 +5269,7 @@ function materialCoverageRows(material) {
 
 function renderMaterial(container, materialId, ctx = {}) {
   const material = getMaterial(renderLibrary, materialId);
-  // 路线上下文解析与论文页同规则（03 §5）。
+  // 只有链接显式携带 route/track 才展示路线位置；无来路时不推测方向。
   let routeCtx = null;
   let ctxNotice = null;
   if (ctx.routeId && ctx.track) {
@@ -5030,14 +5277,10 @@ function renderMaterial(container, materialId, ctx = {}) {
     if (pos) routeCtx = pos;
     else ctxNotice = '链接携带的路线上下文与本文不匹配，已按无路线上下文显示；请在路线页重新进入。';
   }
-  if (!routeCtx && !ctxNotice) {
-    const inferred = inferStartContext(renderLibrary, { kind: 'article', materialId });
-    if (inferred) routeCtx = trackPosition(renderLibrary, inferred.routeId, inferred.track, { kind: 'article', materialId });
-  }
-  const positions = routeCtx ? [routeCtx] : targetPositions(renderLibrary, { kind: 'article', materialId });
+  const positions = routeCtx ? [routeCtx] : [];
 
   const crumbParts = [{ text: '首页', href: '#/home' }];
-  if (routeCtx) crumbParts.push({ text: routeCtx.direction.title, href: buildHash('route', routeCtx.direction.id) });
+  if (routeCtx) crumbParts.push({ text: routeCtx.direction.title, href: buildRouteHash(routeCtx.direction.id, { section: routeCtx.track, stepId: routeCtx.step?.id }) });
   crumbParts.push({ text: material ? material.title : materialId });
   container.appendChild(crumb(crumbParts));
 
@@ -5074,7 +5317,6 @@ function renderMaterial(container, materialId, ctx = {}) {
   header.appendChild(meta);
   article.appendChild(header);
   if (ctxNotice) article.appendChild(el('p', 'lib-notice-flat', ctxNotice));
-  renderCardGuidanceBanner(article, 'material', material.id);
   renderCardGuidanceBanner(article, 'material', material.id);
 
   const pending = material.availability === 'pending' || coverageMode === 'identity';
@@ -5153,7 +5395,7 @@ function renderMaterial(container, materialId, ctx = {}) {
       }
       block.appendChild(nextLine);
       const backLine = el('p', 'lib-rail-line');
-      backLine.appendChild(link(buildHash('route', position.direction.id), '返回路线'));
+      backLine.appendChild(link(buildRouteHash(position.direction.id, { section: position.track, stepId: position.step?.id }), '返回路线'));
       block.appendChild(backLine);
     }
     rail.appendChild(block);
@@ -5180,15 +5422,10 @@ function renderFoundations(container) {
     page.appendChild(emptyBox('经典书目尚未接入：按主题分组的基础经典将在核查身份后显示，不编造条目。'));
     return;
   }
-  for (const group of groups) {
-    const box = el('div', 'lib-paper-group');
-    box.appendChild(el('h3', 'lib-block-title', group.title));
-    if (group.note) box.appendChild(el('p', 'lib-para', group.note));
-    const list = el('div', 'lib-paper-list');
-    for (const paper of group.papers) list.appendChild(paperListItem(paper));
-    box.appendChild(list);
-    page.appendChild(box);
-  }
+  renderSearchablePaperGroups(page, {
+    groupsForScope: () => groups,
+    emptyText: '经典书目暂无可显示的论文。',
+  });
 }
 
 // ---------- 技术学习 ----------
@@ -5640,18 +5877,6 @@ function renderSidebarQuick() {
   box.appendChild(group);
 }
 
-function renderFooterOnce() {
-  const footer = document.getElementById('lib-notices');
-  if (!footer || footer.dataset.rendered === 'true') return;
-  footer.dataset.rendered = 'true';
-  const details = el('details', 'lib-about');
-  details.appendChild(el('summary', null, '关于内容与来源'));
-  for (const notice of renderLibrary.meta?.notices ?? []) details.appendChild(el('p', null, readerSourceNote(notice)));
-  // 03 §6：页脚只增加一次的整理依据提示。
-  details.appendChild(el('p', null, '整理依据已标明；建议自己看的部分请打开原文。打开网页不会变成已读。'));
-  footer.appendChild(details);
-}
-
 // ---------- DYNAMIC-GUIDANCE-009 / C 包：本机导学调整（#/guidance）与生效 meta 辅助 ----------
 // pending 提案仅存在于页面会话内存、不落盘（R2）：未经确认刷新/关闭＝整案丢弃，需重新粘贴。
 // 确认写入由 guidance.applyProposal 在 Web Locks 内重跑校验 ①–④ 后整份 JSON 一次写入；
@@ -5833,7 +6058,7 @@ function renderApp() {
   const raw = window.location.hash;
   const parsed = parseHash(raw);
   container.textContent = '';
-  renderFooterOnce();
+  container.classList.toggle('survey-view', Boolean(parsed && ['surveys', 'survey'].includes(parsed.view)));
   renderSidebarQuick();
   if (!parsed) {
     setNav('home');
@@ -5863,7 +6088,7 @@ function renderApp() {
       renderDirections(container);
       break;
     case 'route':
-      renderRoute(container, parsed.id);
+      renderRoute(container, parsed.id, parsed);
       break;
     case 'papers':
       renderPapers(container);

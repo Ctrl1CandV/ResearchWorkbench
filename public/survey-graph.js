@@ -50,13 +50,14 @@ export function validateTopicMap(article) {
   return errors;
 }
 
-export function articleGraphModel(article, collapsed = []) {
+export function articleGraphModel(article, collapsed = [], readingPathId = null) {
   const groups = article.topicMap?.groups ?? [];
   const nodes = groups.flatMap((group, column) => group.items.map((item, row) => ({
     ...item, groupId: group.id, column, row, unit: article.units.find((unit) => unit.id === item.unitId),
     visible: !collapsed.includes(group.id), x: column * 306 + 34, y: row * 108 + 190, width: 244, height: 84,
   })));
-  const steps = article.readingPaths?.[0]?.steps ?? [];
+  const path = article.readingPaths?.find((entry) => entry.id === readingPathId) ?? article.readingPaths?.[0];
+  const steps = path?.steps ?? [];
   const reading = steps.slice(1).map((step, i) => ({
     from: steps[i].unitId, to: step.unitId, label: '建议接着读', origin: 'editorial', kind: 'reading', reason: step.reason,
   }));
@@ -70,9 +71,18 @@ export function articleGraphModel(article, collapsed = []) {
 export function normalizeMapState(article, saved = {}) {
   const groups = article.topicMap.groups;
   const ids = new Set(article.units.map((unit) => unit.id));
+  const readingPath = article.readingPaths?.find((path) => path.id === saved.readingPathId) ?? null;
+  const pathUnitIds = new Set((readingPath?.steps ?? []).map((step) => step.unitId));
+  const savedPathUnits = Array.isArray(saved.readingPathUnitIds)
+    ? saved.readingPathUnitIds
+    : [saved.readingPathUnitId];
   return {
     selected: ids.has(saved.selected) ? saved.selected : article.readingPaths?.[0]?.steps[0]?.unitId ?? article.units[0].id,
     collapsed: Array.isArray(saved.collapsed) ? saved.collapsed.filter((id) => groups.some((g) => g.id === id)) : groups.filter((g) => g.collapsed).map((g) => g.id),
+    layout: ['graph', 'list', 'reading'].includes(saved.layout) ? saved.layout : 'graph',
+    readingPathId: readingPath?.id ?? null,
+    readingPathUnitId: ids.has(saved.readingPathUnitId) ? saved.readingPathUnitId : null,
+    readingPathUnitIds: [...new Set(savedPathUnits.filter((id) => pathUnitIds.has(id)))],
     zoom: Number.isFinite(saved.zoom) ? Math.max(0.65, Math.min(1.8, saved.zoom)) : 1,
     relations: saved.relations !== false, reading: saved.reading === true,
     scrollLeft: Number.isFinite(saved.scrollLeft) ? Math.max(0, saved.scrollLeft) : 0,
@@ -80,13 +90,43 @@ export function normalizeMapState(article, saved = {}) {
   };
 }
 
-export function rememberSurveyUnit(article, unitId) {
+export function surveyMapState(article) {
+  let saved;
+  try { saved = JSON.parse(sessionStorage.getItem(`survey-map-v1:${article.id}`) || '{}'); } catch { /* View state is optional. */ }
+  return normalizeMapState(article, saved && typeof saved === 'object' ? saved : {});
+}
+
+// Keep the path active for units explicitly entered from it during this
+// session. The visited set lets browser Back/Forward restore earlier units,
+// while an unvisited deep link cannot inherit the path by matching its steps.
+export function activeReadingPathForUnit(article, state, unitId) {
+  const path = article.readingPaths?.find((entry) => entry.id === state.readingPathId) ?? null;
+  const visited = Array.isArray(state?.readingPathUnitIds)
+    ? state.readingPathUnitIds
+    : [state?.readingPathUnitId];
+  return path?.steps.some((step) => step.unitId === unitId) && visited.includes(unitId) ? path : null;
+}
+
+export function rememberSurveyUnit(article, unitId, readingPathId = undefined) {
   if (!article.topicMap) return;
   try {
     const key = `survey-map-v1:${article.id}`;
     const raw = JSON.parse(sessionStorage.getItem(key) || '{}');
     const state = normalizeMapState(article, raw && typeof raw === 'object' ? raw : {});
     state.selected = unitId;
+    if (readingPathId !== undefined) {
+      const nextPathId = article.readingPaths?.some((path) => path.id === readingPathId) ? readingPathId : null;
+      if (nextPathId !== state.readingPathId) state.readingPathUnitIds = [];
+      state.readingPathId = nextPathId;
+    }
+    state.readingPathUnitId = unitId;
+    const activePath = article.readingPaths?.find((path) => path.id === state.readingPathId);
+    if (activePath?.steps.some((step) => step.unitId === unitId)) {
+      if (!state.readingPathUnitIds.includes(unitId)) state.readingPathUnitIds.push(unitId);
+    } else {
+      state.readingPathId = null;
+      state.readingPathUnitIds = [];
+    }
     const parent = article.topicMap.groups.find((group) => group.items.some((item) => item.unitId === unitId));
     state.collapsed = state.collapsed.filter((id) => id !== parent?.id);
     sessionStorage.setItem(key, JSON.stringify(state));
@@ -102,11 +142,17 @@ export function renderArticleGraph(article, root) {
   const persist = () => { try { sessionStorage.setItem(storageKey, JSON.stringify(state)); } catch { /* No reading progress is stored. */ } };
   const section = el('section', 'survey-atlas'); section.id = 'survey-atlas';
   section.append(el('h2', null, '整篇脉络图'), el('p', 'survey-atlas-intro', article.topicMap.intro));
+  const modeToolbar = el('div', 'survey-atlas-modes');
+  modeToolbar.setAttribute('role', 'group');
+  modeToolbar.setAttribute('aria-label', '选择章节浏览方式');
+  const graphPanel = el('div', 'survey-atlas-graph-panel');
   const toolbar = el('div', 'survey-atlas-toolbar'); toolbar.setAttribute('aria-label', '脉络图控制');
   const viewport = el('div', 'survey-atlas-viewport');
   viewport.tabIndex = 0; viewport.setAttribute('role', 'region'); viewport.setAttribute('aria-label', '整篇脉络画布，可拖动或用方向键平移');
   const svg = svgEl('svg', { role: 'group', 'aria-label': article.topicMap.title });
   const details = el('div', 'survey-atlas-detail');
+  const listPanel = el('div', 'survey-atlas-list');
+  const readingPanel = el('div', 'survey-atlas-reading-paths');
   const status = el('p', 'survey-atlas-status'); status.setAttribute('role', 'status');
   const searchLabel = el('label', 'survey-atlas-search');
   searchLabel.append(el('span', null, '找内容'));
@@ -117,7 +163,8 @@ export function renderArticleGraph(article, root) {
   const locate = (id, moveFocus = false) => {
     const group = article.topicMap.groups.find((g) => g.items.some((item) => item.unitId === id));
     if (!group) return;
-    state.selected = id; state.collapsed = state.collapsed.filter((g) => g !== group.id);
+    state.selected = id; state.readingPathId = null; state.readingPathUnitId = null; state.readingPathUnitIds = [];
+    state.collapsed = state.collapsed.filter((g) => g !== group.id);
     persist(); draw();
     const target = Array.from(svg.querySelectorAll('[data-unit-id]')).find((item) => item.dataset.unitId === id);
     if (target) {
@@ -142,24 +189,89 @@ export function renderArticleGraph(article, root) {
     state.collapsed = state.collapsed.filter((id) => id !== selectedGroup?.id);
     viewport.scrollTo(0, 0); state.scrollLeft = 0; state.scrollTop = 0; persist(); draw();
   });
-  toolbar.append(searchLabel, button('文字目录', () => {
-    const navigation = document.getElementById('survey-text-navigation');
-    if (navigation) { navigation.open = true; navigation.scrollIntoView({ block: 'start' }); navigation.querySelector('summary')?.focus(); }
-  }), button('展开全部', () => { state.collapsed = []; persist(); draw(); }), fit,
+  toolbar.append(searchLabel, button('展开分组', () => { state.collapsed = []; persist(); draw(); }), fit,
     button('−', () => changeZoom(-.15), 'survey-zoom-out'), zoomLabel, button('+', () => changeZoom(.15), 'survey-zoom-in'));
   toolbar.querySelector('.survey-zoom-out').setAttribute('aria-label', '缩小脉络图');
   toolbar.querySelector('.survey-zoom-in').setAttribute('aria-label', '放大脉络图');
   const layers = el('div', 'survey-atlas-layers');
   layers.append(el('span', 'survey-atlas-legend', '实线：主题包含'), toggle('虚线：选中节点的联系', 'relations'), toggle('点线：建议读序', 'reading'));
   viewport.append(svg);
-  section.append(toolbar, searchResults, layers, viewport, status, details);
+  const setLayout = (layout) => { state.layout = layout; persist(); draw(); };
+  for (const [layout, label] of [['graph', '关系图'], ['list', '章节列表'], ['reading', '建议读序']]) {
+    const control = button(label, () => setLayout(layout), 'survey-atlas-mode');
+    control.dataset.layout = layout;
+    modeToolbar.append(control);
+  }
+  for (const group of article.topicMap.groups) {
+    const groupSection = el('section', 'survey-atlas-list-group');
+    groupSection.append(el('h3', null, group.label), el('p', 'survey-atlas-list-subtitle', group.subtitle));
+    const units = el('div', 'survey-atlas-list-units');
+    for (const item of group.items) {
+      const unit = article.units.find((entry) => entry.id === item.unitId);
+      if (!unit) continue;
+      const row = el('article', 'survey-atlas-list-unit');
+      const chooseUnit = button(`${item.section} · ${item.label}`, () => {
+        state.selected = item.unitId;
+        state.readingPathId = null;
+        state.readingPathUnitId = null;
+        state.readingPathUnitIds = [];
+        persist(); draw();
+      }, 'survey-atlas-list-title');
+      chooseUnit.dataset.unitId = item.unitId;
+      row.append(chooseUnit, el('p', null, unit.lead));
+      const readLink = el('a', 'survey-atlas-list-read', '阅读本节 →');
+      readLink.href = surveyUnitUrl(article.id, item.unitId);
+      readLink.addEventListener('click', () => rememberSurveyUnit(article, item.unitId, null));
+      row.append(readLink);
+      units.append(row);
+    }
+    groupSection.append(units);
+    listPanel.append(groupSection);
+  }
+  if (article.readingPaths?.length) {
+    for (const path of article.readingPaths) {
+      const pathSection = el('section', 'survey-atlas-path');
+      pathSection.append(el('h3', null, path.title), el('p', 'survey-atlas-path-purpose', path.purpose));
+      const steps = el('ol', 'survey-atlas-path-steps');
+      for (const [index, step] of path.steps.entries()) {
+        const unit = article.units.find((entry) => entry.id === step.unitId);
+        if (!unit) continue;
+        const item = el('li', 'survey-atlas-path-step');
+        const title = el('a', null, unit.title);
+        title.href = surveyUnitUrl(article.id, unit.id);
+        title.addEventListener('click', () => rememberSurveyUnit(article, unit.id, path.id));
+        item.append(el('span', 'survey-atlas-path-index', String(index + 1).padStart(2, '0')), title,
+          el('p', null, step.reason), el('small', null, step.action));
+        steps.append(item);
+      }
+      pathSection.append(steps);
+      readingPanel.append(pathSection);
+    }
+  } else {
+    readingPanel.append(el('p', null, '这篇综述还没有单独整理建议读序，可以按章节列表选择阅读。'));
+  }
+  const graphView = el('div', 'survey-atlas-graph-view');
+  graphView.append(toolbar, searchResults, layers, viewport, status);
+  graphPanel.append(graphView);
+  section.append(modeToolbar, graphPanel, listPanel, readingPanel, details);
   root.append(section);
-  const anchor = (id, label) => { const a = el('a', null, label); a.href = surveyUnitUrl(article.id, id); return a; };
+  const anchor = (id, label) => {
+    const a = el('a', null, label); a.href = surveyUnitUrl(article.id, id);
+    a.addEventListener('click', () => rememberSurveyUnit(article, id, null));
+    return a;
+  };
   const relatedEdges = () => [ ...(state.relations ? model.relations : []), ...(state.reading ? model.reading : []) ]
     .filter((edge) => edge.from === state.selected || edge.to === state.selected);
-  const select = (id) => { state.selected = id; persist(); draw(); svg.querySelector(`[data-unit-id="${id}"]`)?.focus({ preventScroll: true }); };
+  const select = (id) => {
+    state.selected = id;
+    state.readingPathId = null;
+    state.readingPathUnitId = null;
+    state.readingPathUnitIds = [];
+    persist(); draw();
+    svg.querySelector(`[data-unit-id="${id}"]`)?.focus({ preventScroll: true });
+  };
   const draw = () => {
-    model = articleGraphModel(article, state.collapsed);
+    model = articleGraphModel(article, state.collapsed, state.readingPathId);
     svg.replaceChildren(svgEl('title', {}, article.topicMap.title));
     svg.setAttribute('viewBox', `0 0 ${model.width} ${model.height}`);
     svg.style.width = `${state.zoom * 100}%`;
@@ -215,6 +327,8 @@ export function renderArticleGraph(article, root) {
       badge.append(svgEl('circle', { cx: bx, cy: by, r: 9 }), svgEl('text', { x: bx, y: by + 4, 'text-anchor': 'middle' }, index + 1));
       const showReason = () => {
         const row = details.querySelector(`[data-edge-index="${index}"]`);
+        const disclosure = row?.closest('details');
+        if (disclosure) disclosure.open = true;
         row?.scrollIntoView({ block: 'nearest' }); row?.focus({ preventScroll: true });
       };
       badge.addEventListener('click', showReason);
@@ -237,15 +351,18 @@ export function renderArticleGraph(article, root) {
       svg.append(group);
       const read = svgEl('a', { href: surveyUnitUrl(article.id, item.unitId), 'aria-label': `阅读${item.label}`, class: 'survey-atlas-read' });
       read.append(svgEl('text', { x: item.x + item.width - 14, y: item.y + 22, 'text-anchor': 'end' }, '阅读 ↗'));
-      read.addEventListener('click', () => { state.selected = item.unitId; persist(); }); svg.append(read);
+      read.addEventListener('click', () => rememberSurveyUnit(article, item.unitId, null)); svg.append(read);
     }
     svg.append(badges);
     const current = model.nodes.find((n) => n.unitId === state.selected);
     details.replaceChildren();
+    details.hidden = state.layout !== 'graph';
     if (current) {
       const intro = el('div', 'survey-atlas-preview');
       intro.append(el('p', 'survey-atlas-selected-label', `当前选中 · ${current.section}`), el('h3', null, current.unit.title), el('p', null, current.unit.lead), anchor(current.unitId, '进入本节阅读'));
-      const related = el('div', 'survey-atlas-neighbors'); related.append(el('h3', null, '与其他部分的联系'));
+      const related = el('details', 'survey-atlas-neighbors');
+      related.open = window.matchMedia?.('(min-width: 1101px)').matches ?? true;
+      related.append(el('summary', null, '与其他部分的联系'));
       if (!edges.length) related.append(el('p', null, '当前图层没有此节点的连接。可打开章节联系或建议读序，也可按作者目录阅读。'));
       for (const [index, edge] of edges.entries()) {
         const otherId = edge.from === current.unitId ? edge.to : edge.from;
@@ -259,6 +376,17 @@ export function renderArticleGraph(article, root) {
       details.append(intro, related);
       status.textContent = `${model.nodes.filter((n) => n.visible).length} / ${model.nodes.length} 个阅读单元可见。选中：${current.label}。拖动空白平移；点“阅读”进入正文。`;
     }
+    for (const control of modeToolbar.querySelectorAll('[data-layout]')) {
+      const active = control.dataset.layout === state.layout;
+      control.setAttribute('aria-pressed', String(active));
+      control.classList.toggle('is-current', active);
+    }
+    for (const control of listPanel.querySelectorAll('[data-unit-id]')) {
+      control.setAttribute('aria-pressed', String(control.dataset.unitId === state.selected));
+    }
+    graphPanel.hidden = state.layout !== 'graph';
+    listPanel.hidden = state.layout !== 'list';
+    readingPanel.hidden = state.layout !== 'reading';
   };
   search.addEventListener('input', () => {
     searchResults.replaceChildren(); const term = search.value.trim().toLocaleLowerCase();

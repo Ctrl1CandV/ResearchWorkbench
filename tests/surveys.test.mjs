@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { SURVEYS } from '../public/content/surveys.js';
 import { parseHash } from '../public/library.js';
-import { articleGraphModel, normalizeMapState, surveyUnitUrl, validateTopicMap } from '../public/survey-graph.js';
+import { activeReadingPathForUnit, articleGraphModel, normalizeMapState, rememberSurveyUnit, surveyMapState, surveyUnitUrl, validateTopicMap } from '../public/survey-graph.js';
 
 test('SURVEY-013 只按真实进度区分候选与部分阅读包，不伪装为 complete', () => {
   assert.equal(SURVEYS.schemaVersion, 1);
@@ -98,15 +98,82 @@ test('图的折叠不删除正文，附录可还原，建议读序不伪装成�
   assert.ok(graph.relations.every((edge) => edge.kind === 'relation'));
 });
 
-test('图状态只恢复有效节点、分组和有界缩放', () => {
+test('图状态只恢复有效节点、分组、视图、读序和有界缩放', () => {
   const article = SURVEYS.articles[0];
-  const state = normalizeMapState(article, { selected: 'missing', collapsed: ['missing', 'appendices'], zoom: 99, scrollLeft: -3, scrollTop: Infinity });
+  const path = article.readingPaths[0];
+  const state = normalizeMapState(article, {
+    selected: 'missing', collapsed: ['missing', 'appendices'], zoom: 99,
+    layout: 'reading', readingPathId: path.id, readingPathUnitId: path.steps[0].unitId,
+    readingPathUnitIds: [path.steps[0].unitId, 'not-a-path-unit'],
+    scrollLeft: -3, scrollTop: Infinity,
+  });
   assert.equal(state.selected, 'survey-scope');
   assert.deepEqual(state.collapsed, ['appendices']);
+  assert.equal(state.layout, 'reading');
+  assert.equal(state.readingPathId, path.id);
+  assert.equal(state.readingPathUnitId, path.steps[0].unitId);
+  assert.deepEqual(state.readingPathUnitIds, [path.steps[0].unitId], '只恢复该读序实际访问过的章节');
   assert.equal(state.zoom, 1.8);
   assert.equal(state.scrollLeft, 0);
   assert.equal(state.scrollTop, 0);
   assert.equal(normalizeMapState(article, { selected: 'core-capabilities', zoom: .1 }).zoom, .65);
+  const invalid = normalizeMapState(article, { layout: 'unknown', readingPathId: 'unknown', readingPathUnitId: 'unknown' });
+  assert.equal(invalid.layout, 'graph');
+  assert.equal(invalid.readingPathId, null, '无有效读序时不猜默认路径');
+  assert.equal(invalid.readingPathUnitId, null);
+});
+
+test('综述单元只在由对应读序明确进入时继承该读序', async () => {
+  const article = SURVEYS.articles[0];
+  const path = article.readingPaths[0];
+  const sessionValues = new Map();
+  globalThis.sessionStorage = {
+    getItem: (key) => sessionValues.get(key) ?? null,
+    setItem: (key, value) => sessionValues.set(key, String(value)),
+  };
+
+  rememberSurveyUnit(article, 'survey-scope', path.id);
+  let state = surveyMapState(article);
+  assert.equal(activeReadingPathForUnit(article, state, 'survey-scope')?.id, path.id);
+
+  // 沿读序前进后，Back/Forward 对应的历史章节都应保留同一读序。
+  const secondUnitId = path.steps[1].unitId;
+  rememberSurveyUnit(article, secondUnitId, path.id);
+  state = surveyMapState(article);
+  assert.equal(activeReadingPathForUnit(article, state, 'survey-scope')?.id, path.id, '浏览器后退恢复已访问的上一节');
+  assert.equal(activeReadingPathForUnit(article, state, secondUnitId)?.id, path.id, '浏览器前进恢复已访问的下一节');
+  const unvisitedUnitId = path.steps.find((step) => !state.readingPathUnitIds.includes(step.unitId))?.unitId;
+  assert.ok(unvisitedUnitId, '测试读序需要包含尚未访问的章节');
+  assert.equal(activeReadingPathForUnit(article, state, unvisitedUnitId), null, '没有从读序进入的其他章节不能继承读序');
+
+  // 书架关系链接按自由探索处理，即使目标章节也在旧路径中。
+  rememberSurveyUnit(article, 'benchmark-dimensions', null);
+  state = surveyMapState(article);
+  assert.equal(state.readingPathId, null);
+  assert.deepEqual(state.readingPathUnitIds, []);
+  assert.equal(activeReadingPathForUnit(article, state, 'benchmark-dimensions'), null);
+  assert.equal(activeReadingPathForUnit(article, { readingPathId: path.id, readingPathUnitId: 'survey-scope', readingPathUnitIds: ['survey-scope'] }, 'benchmark-dimensions'), null,
+    '深链落在其他单元时不能复用旧读序');
+
+  const source = await readFile(new URL('../public/surveys.js', import.meta.url), 'utf8');
+  assert.match(source, /evidenceLink\.addEventListener\('click', \(\) => rememberSurveyUnit\(article, unit\.id, null\)\)/,
+    '书架文章关系入口应清除目标综述的读序上下文');
+  assert.match(source, /evidenceLink\.addEventListener\('click', \(\) => rememberSurveyUnit\(sourceArticle, unit\.id, null\)\)/,
+    '当前综述关系详情入口应清除目标综述的读序上下文');
+});
+
+test('关系图的建议读序层按用户选择的路径生成，不固定套用第一条', () => {
+  const article = structuredClone(SURVEYS.articles[0]);
+  const firstPath = article.readingPaths[0];
+  assert.ok(firstPath.steps.length > 1, '测试夹具需要至少两个章节');
+  const secondPath = { ...firstPath, id: `${firstPath.id}-alternate`, steps: [...firstPath.steps].reverse() };
+  article.readingPaths.push(secondPath);
+  const first = articleGraphModel(article, [], article.readingPaths[0].id).reading;
+  const second = articleGraphModel(article, [], secondPath.id).reading;
+  assert.deepEqual(second.map((edge) => edge.from), secondPath.steps.slice(0, -1).map((step) => step.unitId));
+  assert.deepEqual(second.map((edge) => edge.to), secondPath.steps.slice(1).map((step) => step.unitId));
+  assert.notDeepEqual(second.map((edge) => [edge.from, edge.to]), first.map((edge) => [edge.from, edge.to]));
+  assert.equal(second.every((edge) => edge.origin === 'editorial' && edge.kind === 'reading'), true);
 });
 
 test('图校验拒绝孤立阅读单元、悬空边和缺依据的作者边', () => {
