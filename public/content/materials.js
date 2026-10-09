@@ -70,6 +70,7 @@ export const MATERIALS = [
       blocks: [
         {
           kind: 'paragraph',
+          id: 'scene-context',
           spans: [
             { kind: 'strong', text: '先把场景说清。' },
             { kind: 'text', text: '「跨工具」指不同 Agent 无法共享同一个 harness、完整上下文和持续会话——常常是因为想用的模型分别锁在各自的工具里。harness 不只是模型名字：它还包括工具集、权限、日志与计费方式。不能共享完整会话，不代表不能共享获准的文件或仓库；反过来，能传文件也不代表信息就被正确理解了。这是研究场景，不是一种算法。' },
@@ -77,6 +78,7 @@ export const MATERIALS = [
         },
         {
           kind: 'paragraph',
+          id: 'collaboration-mechanisms',
           spans: [
             { kind: 'strong', text: '机制是可组合的。' },
             { kind: 'text', text: '直接传消息或摘要是一种机制；借助共享工作区、长期记忆、检索、仓库工件协作也是机制；它们可以组合使用，不互斥。「状态 + 交接包」只是众多组合之一，不是题目本身。' },
@@ -84,6 +86,7 @@ export const MATERIALS = [
         },
         {
           kind: 'paragraph',
+          id: 'information-representation',
           spans: [
             { kind: 'strong', text: '表示是机制内部的选择。' },
             { kind: 'text', text: 'summary（摘要）、raw trajectory（原始轨迹）、handoff packet（交接包）、wiki、状态快照、检索选段，都是「传什么」的候选表示，各有信息量与成本。文件、Git、协议属于传输/互操作层：解决「怎么搬」，不解决「搬什么最有效」。' },
@@ -91,6 +94,7 @@ export const MATERIALS = [
         },
         {
           kind: 'comparison',
+          id: 'four-layer-comparison',
           columns: ['层', '回答的问题', '例子'],
           rows: [
             ['场景', '在什么约束下协作', '模型分处两个封闭工具'],
@@ -101,6 +105,7 @@ export const MATERIALS = [
         },
         {
           kind: 'paragraph',
+          id: 'budget-accounting',
           spans: [
             { kind: 'strong', text: '预算要记两本账。' },
             { kind: 'text', text: '接收方一次能看到的通信上下文是一个额度；端到端所有参与者的累计输入、输出消耗是另一本账。摘要生成、记忆写入与检索、工具返回、打开工件后进入上下文的内容都要记账，不能成为不记账的信息后门。成功、返工、token、延迟是不同的量：能复述前史不等于少走弯路。固定的是预算上限/口径，不要求每次都恰好消耗相同 token；异构 tokenizer 与不可见的工具轨迹会让严格可比更难，读论文时先看它记的口径。' },
@@ -108,6 +113,7 @@ export const MATERIALS = [
         },
         {
           kind: 'paragraph',
+          id: 'handoff-example',
           spans: [
             { kind: 'strong', text: '一个中性例子。' },
             { kind: 'text', text: '工具 A 的 Agent 修一个 issue 做到一半（已改三个文件、跑过一次测试），把现场交给工具 B 的 Agent；B 继续后可能再交回 A。这一小段里就有全部四层：场景是 A/B 两个 harness；机制可以是「B 读 A 留下的工件+摘要」；表示是摘要怎么写、工件留哪些；传输是共享仓库或导出文件。换手的 Tax/Debt 两篇论文把这一小段做成了可对照的实验设置——但换手只是整个协作问题的第一切片，持续分工、反馈往返和长期合作仍在研究范围内。' },
@@ -115,6 +121,7 @@ export const MATERIALS = [
         },
         {
           kind: 'callout',
+          id: 'research-question',
           tone: 'note',
           title: '待研究的不是「哪种格式最好」',
           blocks: [
@@ -125,6 +132,24 @@ export const MATERIALS = [
           ],
         },
       ],
+    },
+    readingLayout: {
+      sections: [
+        { id: 'scene', heading: '先把场景说清', blockIds: ['scene-context'] },
+        { id: 'mechanisms', heading: '机制与表示', blockIds: ['collaboration-mechanisms', 'information-representation'] },
+        { id: 'budget', heading: '预算与代价', blockIds: ['budget-accounting'] },
+        { id: 'examples', heading: '把四层放进例子里', blockIds: ['handoff-example'] },
+        { id: 'takeaway', heading: '带着问题继续读', blockIds: ['research-question'] },
+      ],
+      figure: {
+        blockId: 'four-layer-comparison',
+        targets: [
+          { rowKey: '场景', sectionId: 'scene' },
+          { rowKey: '机制', sectionId: 'mechanisms' },
+          { rowKey: '表示', sectionId: 'mechanisms' },
+          { rowKey: '传输', sectionId: 'examples' },
+        ],
+      },
     },
     nextAction: '下一步读《Beyond Frameworks》：把「协作」拆成治理、参与、交互与历史管理四个维度（定义分别落在 §3.2/§3.3/§3.4/§3.5，读前可对照本页四层表：它的「历史管理」≈本页「表示」层）。',
   },

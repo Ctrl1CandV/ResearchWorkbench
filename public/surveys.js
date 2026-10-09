@@ -1,6 +1,6 @@
 // SURVEY-013: 综述书架与候选记录。候选未读时明确展示来源状态，不生成空壳阅读图。
 import { SURVEYS } from './content/surveys.js';
-import { activeReadingPathForUnit, renderArticleGraph, rememberSurveyUnit, surveyMapState } from './survey-graph.js';
+import { activeReadingPathForUnit, renderArticleGraph, rememberSurveyUnit, surveyMapState, wrapSurveyText } from './survey-graph.js';
 
 const node = (tag, className, text) => {
   const el = document.createElement(tag);
@@ -190,6 +190,16 @@ function renderConceptMap(graph, root) {
 }
 
 let surveyTocObserver = null;
+let surveyReaderSize = 'standard';
+let surveyReaderCleanup = null;
+
+export function cleanupSurveyReader() {
+  surveyTocObserver?.disconnect();
+  surveyTocObserver = null;
+  if (typeof surveyReaderCleanup === 'function') surveyReaderCleanup();
+  surveyReaderCleanup = null;
+  surveyReaderSize = 'standard';
+}
 
 function markCurrent(buttons, id) {
   for (const button of buttons) {
@@ -260,36 +270,124 @@ function renderUnit(article, unit, root) {
   const mapState = surveyMapState(article);
   const readingPath = activeReadingPathForUnit(article, mapState, unit.id);
   rememberSurveyUnit(article, unit.id, readingPath?.id ?? null);
-  root.append(link(hash(article.id), '← 返回整篇脉络图', 'survey-back'));
-  root.append(node('p', 'survey-eyebrow', `${article.year} · ${unit.sourceSections.join(' / ')}`));
-  root.append(node('h1', null, unit.title));
-  root.append(node('p', 'survey-unit-lead', unit.lead));
-  if (unit.graph) renderConceptMap(unit.graph, root);
+  const page = node('div', 'survey-unit-page');
+  page.dataset.readerSize = surveyReaderSize;
+  root.append(page);
+  const hero = node('header', 'survey-reader-hero');
+  hero.append(
+    link(hash(article.id), '← 返回整篇脉络图', 'survey-back'),
+    node('p', 'survey-eyebrow', `${article.year} · ${unit.sourceSections.join(' / ')}`),
+    node('h1', 'survey-unit-title', unit.title),
+    node('p', 'survey-unit-lead', unit.lead),
+  );
+  page.append(hero);
+  if (unit.graph) renderConceptMap(unit.graph, page);
   const headings = (unit.blocks ?? []).filter((block) => block.type === 'heading');
   const layout = node('div', 'survey-reader-layout');
-  const toc = node('nav', 'survey-reader-toc');
-  toc.setAttribute('aria-label', '本阅读单元目录');
-  toc.append(node('h2', null, '本节脉络'));
-  for (const heading of headings) {
-    const item = node('button', null, heading.text);
-    item.type = 'button';
-    item.dataset.target = heading.id;
-    item.addEventListener('click', () => {
-      const target = document.getElementById(heading.id);
-      if (!target) return;
-      markCurrent([...toc.querySelectorAll('button[data-target]')], heading.id);
-      target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      try { target.focus({ preventScroll: true }); } catch { /* 标题不可聚焦时仍保留滚动 */ }
-    });
-    toc.append(item);
+  const rail = node('aside', 'survey-reader-rail');
+  const tools = node('details', 'survey-reader-tools');
+  const hasOutline = headings.length > 0;
+  tools.append(node('summary', 'survey-reader-tools-summary', hasOutline ? '目录与阅读设置' : '阅读设置'));
+  let toc = null;
+  if (hasOutline) {
+    toc = node('nav', 'survey-reader-toc');
+    toc.setAttribute('aria-label', '本阅读单元目录');
+    toc.append(node('h2', null, '本节脉络'));
+    for (const heading of headings) {
+      const item = node('button', null, heading.text);
+      item.type = 'button';
+      item.dataset.target = heading.id;
+      item.addEventListener('click', () => {
+        const target = document.getElementById(heading.id);
+        if (!target) return;
+        markCurrent([...toc.querySelectorAll('button[data-target]')], heading.id);
+        const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+        target.scrollIntoView({ behavior: reducedMotion ? 'auto' : 'smooth', block: 'start' });
+        try { target.focus({ preventScroll: true }); } catch { /* 标题不可聚焦时仍保留滚动 */ }
+        if (window.matchMedia?.('(max-width: 1100px)').matches) tools.open = false;
+      });
+      toc.append(item);
+    }
+    tools.append(toc);
   }
+  const settings = node('section', 'survey-reader-settings');
+  settings.append(node('p', 'survey-reader-settings-label', '阅读设置'));
+  const sizeGroup = node('div', 'survey-reader-size-group');
+  sizeGroup.setAttribute('role', 'group');
+  sizeGroup.setAttribute('aria-label', '正文大小');
+  for (const [size, label] of [['standard', '标准字号'], ['large', '放大字号']]) {
+    const button = node('button', 'survey-reader-size', label);
+    button.type = 'button';
+    button.dataset.readerSize = size;
+    button.setAttribute('aria-pressed', String(surveyReaderSize === size));
+    button.addEventListener('click', () => {
+      const position = captureSurveyReaderPosition(page);
+      surveyReaderSize = size;
+      page.dataset.readerSize = size;
+      for (const option of sizeGroup.querySelectorAll('.survey-reader-size')) {
+        option.setAttribute('aria-pressed', String(option.dataset.readerSize === size));
+      }
+      restoreSurveyReaderPosition(position);
+    });
+    sizeGroup.append(button);
+  }
+  settings.append(sizeGroup);
+  const focusButton = node('button', 'survey-reader-focus-button', '专注阅读');
+  focusButton.type = 'button';
+  settings.append(focusButton);
+  const compactTools = window.matchMedia?.('(max-width: 1100px)');
+  tools.open = !(compactTools?.matches ?? false);
+  tools.append(settings);
+  rail.append(tools);
   const body = node('article', 'survey-reading-body');
+  body.setAttribute('aria-label', '综述单元正文');
   const intent = renderReadingIntent(unit);
   if (intent) body.append(intent);
   for (const block of unit.blocks ?? []) renderReadingBlock(block, body);
-  layout.append(toc, body);
-  root.append(layout);
-  bindSurveyToc(toc, headings);
+  if (hasOutline) {
+    layout.classList.add('has-outline');
+    layout.append(rail, body);
+  } else {
+    rail.classList.add('is-inline');
+    page.append(rail);
+    layout.append(body);
+  }
+  const exitButton = node('button', 'survey-reader-focus-exit', '退出专注阅读');
+  exitButton.type = 'button';
+  page.append(layout, exitButton);
+  if (hasOutline) bindSurveyToc(toc, headings);
+  const setFocused = (focused, returnFocus = false) => {
+    const position = captureSurveyReaderPosition(page);
+    page.classList.toggle('is-reading-focus', focused);
+    if (focused) exitButton.focus({ preventScroll: true });
+    else if (returnFocus) {
+      const compact = Boolean(window.matchMedia?.('(max-width: 1100px)').matches);
+      (compact && !tools.open ? tools.querySelector('summary') : focusButton).focus({ preventScroll: true });
+    }
+    restoreSurveyReaderPosition(position);
+  };
+  focusButton.addEventListener('click', () => setFocused(true));
+  exitButton.addEventListener('click', () => setFocused(false, true));
+  const onKeydown = (event) => {
+    if (event.key === 'Escape' && page.classList.contains('is-reading-focus')) {
+      event.preventDefault();
+      setFocused(false, true);
+    }
+  };
+  window.addEventListener('keydown', onKeydown);
+  const onToolsBreakpointChange = (event) => {
+    // At desktop widths the summary is hidden, so the details must stay open
+    // to keep the outline and reader settings reachable.
+    if (!event.matches) tools.open = true;
+  };
+  if (compactTools?.addEventListener) compactTools.addEventListener('change', onToolsBreakpointChange);
+  else compactTools?.addListener?.(onToolsBreakpointChange);
+  surveyReaderCleanup = () => {
+    window.removeEventListener('keydown', onKeydown);
+    if (compactTools?.removeEventListener) compactTools.removeEventListener('change', onToolsBreakpointChange);
+    else compactTools?.removeListener?.(onToolsBreakpointChange);
+    page.classList.remove('is-reading-focus');
+  };
   const navigation = node('nav', 'survey-unit-nav');
   navigation.setAttribute('aria-label', '本篇其他阅读单元');
   const orderedIds = readingPath
@@ -307,7 +405,32 @@ function renderUnit(article, unit, root) {
   if (readingPath && !next) links.append(node('p', 'survey-path-finished', '这条建议读序已到最后一节；你可以回到结构图继续选择其他内容。'));
   navigation.append(links);
   navigation.append(link(hash(article.id), '回到图中选择其他内容', 'survey-back'));
-  root.append(navigation);
+  page.append(navigation);
+}
+
+function captureSurveyReaderPosition(page) {
+  const readingLine = window.innerHeight * 0.4;
+  const anchor = [...page.querySelectorAll(
+    '.survey-reading-body > *, .survey-unit-title, .survey-unit-lead, .survey-concept-map',
+  )]
+    .map((element) => ({ element, rect: element.getBoundingClientRect() }))
+    .filter(({ rect }) => rect.bottom > 0 && rect.top < window.innerHeight * 0.8)
+    .sort((a, b) => {
+      const distance = ({ top, bottom }) => top > readingLine ? top - readingLine : bottom < readingLine ? readingLine - bottom : 0;
+      return distance(a.rect) - distance(b.rect);
+    })[0];
+  return anchor
+    ? { element: anchor.element, top: anchor.rect.top, scrollY: window.scrollY }
+    : { scrollY: window.scrollY };
+}
+
+function restoreSurveyReaderPosition(position) {
+  if (!position) return;
+  if (position.element?.isConnected) {
+    window.scrollBy(0, position.element.getBoundingClientRect().top - position.top);
+  } else {
+    window.scrollTo({ top: position.scrollY, behavior: 'auto' });
+  }
 }
 
 function renderArticlePath(article, path) {
@@ -336,210 +459,374 @@ function renderArticlePath(article, path) {
   return section;
 }
 
+const shelfUiState = {
+  selectedId: null,
+  query: '',
+  relationByArticle: new Map(),
+  relationQueryByArticle: new Map(),
+  task: { expanded: false, mode: 'topic', value: '', generated: null, nextGenerationId: 0, copiedId: null, clipboardNotice: '', pendingCopyIds: new Set() },
+};
+
+const surveyStatusLabel = (article) => article.state === 'candidate' ? '正文待制作'
+  : article.state === 'partial' ? '部分内容已整理' : article.stateLabel ?? '状态待核';
+
+const surveyTaskPrompt = (mode, text) => {
+  const modeLabel = { topic: '领域', keywords: '关键词', paper: '指定文章' }[mode] ?? '领域';
+  return `请为我的研究阅读工作台制作一份综述阅读包。\n输入类型：${modeLabel}\n输入内容：${text}\n\n要求：先确认文章身份与固定版本，再核对全文、关键图表和附录；提供少量有理由的选文，不把引用量或顶刊身份单独当成质量保证。按原文结构制作章节覆盖清单、内部关系与建议读序。阅读卡只作入口，正文要保留连贯解释、分类依据、比较、例子、条件和限制，不统一压缩字数。逐条给出准确章节/页码/图表定位；区分作者原意、编辑联系和自编例子；无法核对的内容标明缺口。不要把被综述引用的研究冒充为已独立阅读。生成前先确认我的本地来源/主题约束；不要复制、上传私人 PDF 或改写个人阅读记录。`;
+};
+
 function renderShelf(root) {
-  root.append(node('h1', 'survey-shelf-title', '综述之间如何衔接'));
-  root.append(node('p', 'survey-shelf-intro', '先按当前问题选一篇，再沿文章内部的章节关系继续阅读。点击图中的综述，查看它讲什么，以及和其他文章有什么联系。'));
+  const articles = Array.isArray(SURVEYS.articles) ? SURVEYS.articles : [];
+  const relations = Array.isArray(SURVEYS.relations) ? SURVEYS.relations : [];
+  const selectedKey = 'research-workbench:survey-shelf:selected';
+  const page = node('div', 'survey-shelf-page');
+  page.append(node('h1', 'survey-shelf-title', '综述之间如何衔接'));
+  page.append(node('p', 'survey-shelf-intro', '先选择一篇综述，了解它覆盖的范围；再按需查看它与某一篇文章之间的具体联系。文中的章节链接指向当前已整理的阅读内容。'));
 
   const layout = node('div', 'survey-shelf-layout');
-  const graph = node('section', 'survey-cross-map');
-  graph.append(node('h2', null, 'Agent 综述阅读全景'));
-  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  svg.setAttribute('viewBox', '0 0 1000 460');
-  svg.setAttribute('role', 'group');
-  svg.setAttribute('aria-label', '三篇 Agent 综述及其互补关系');
-  const svgNode = (tag, attrs = {}, text = '') => {
-    const element = document.createElementNS('http://www.w3.org/2000/svg', tag);
-    for (const [key, value] of Object.entries(attrs)) element.setAttribute(key, String(value));
-    if (text) element.textContent = text;
-    return element;
-  };
-  const positions = {
-    'survey-llm-agents-arxiv-2023': { x: 36, y: 34, width: 320, height: 126, bend: -46 },
-    'survey-autonomous-agents-fcs-2024': { x: 36, y: 300, width: 320, height: 126, bend: 46 },
-    'survey-agent-evaluation-2026': { x: 644, y: 167, width: 320, height: 146, bend: 0 },
-  };
-  const selectedKey = 'research-workbench:survey-shelf:selected';
-  let selectedId;
-  try { selectedId = sessionStorage.getItem(selectedKey); } catch { /* Selection is optional view state. */ }
-  if (!SURVEYS.articles.some((article) => article.id === selectedId)) selectedId = SURVEYS.articles[0]?.id;
-  const edgeLayer = svgNode('g', { class: 'survey-cross-edges', 'aria-hidden': 'true' });
-  for (const relation of SURVEYS.relations ?? []) {
-    const from = positions[relation.fromSurveyId];
-    const to = positions[relation.toSurveyId];
-    if (!from || !to) continue;
-    let pathData;
-    let labelX;
-    let labelY;
-    if (from.x === to.x) {
-      const startY = from.y < to.y ? from.y + from.height : to.y + to.height;
-      const endY = from.y < to.y ? to.y : from.y;
-      pathData = `M ${from.x + from.width / 2} ${startY} C ${from.x + from.width / 2 + 68} ${startY + 18}, ${from.x + from.width / 2 + 68} ${endY - 18}, ${from.x + from.width / 2} ${endY}`;
-      labelX = from.x + from.width / 2;
-      labelY = (startY + endY) / 2 + 5;
-    } else {
-      const left = from.x < to.x ? from : to;
-      const right = from.x < to.x ? to : from;
-      const startY = left.y + left.height / 2;
-      const endY = right.y + right.height / 2;
-      const offset = (from.y < to.y ? -1 : 1) * Math.max(30, Math.abs(endY - startY) * 0.44);
-      pathData = `M ${left.x + left.width} ${startY} C ${left.x + left.width + 112} ${startY + offset}, ${right.x - 112} ${endY + offset}, ${right.x} ${endY}`;
-      labelX = (left.x + left.width + right.x) / 2;
-      labelY = (startY + endY) / 2 + offset * 0.52;
-    }
-    edgeLayer.append(svgNode('path', { d: pathData, class: 'survey-cross-edge-line' }));
-    edgeLayer.append(svgNode('text', { x: labelX, y: labelY, class: 'survey-cross-edge-label' }, relation.displayLabel ?? '内容互补'));
-  }
-  svg.append(edgeLayer);
+  const catalog = node('section', 'survey-shelf-catalog');
+  catalog.append(node('h2', 'survey-shelf-section-title', '选择综述'));
+  const searchLabel = node('label', 'survey-shelf-search-label', '搜索综述');
+  const search = node('input', 'survey-shelf-search');
+  search.type = 'search'; search.maxLength = 200; search.placeholder = '输入题名、年份或主题词';
+  search.setAttribute('aria-label', '搜索综述');
+  search.value = shelfUiState.query;
+  searchLabel.append(search);
+  const count = node('p', 'survey-shelf-count'); count.setAttribute('aria-live', 'polite');
+  const articleList = node('div', 'survey-shelf-list');
+  catalog.append(searchLabel, count, articleList);
 
-  const selectedDetails = node('aside', 'survey-cross-selection');
-  const relationDetails = node('details', 'survey-relation-list');
-  relationDetails.append(node('summary', null, '按文字浏览文章关系'));
-  for (const relation of SURVEYS.relations ?? []) {
-    const from = SURVEYS.articles.find((article) => article.id === relation.fromSurveyId);
-    const to = SURVEYS.articles.find((article) => article.id === relation.toSurveyId);
-    if (!from || !to) continue;
-    const item = node('section', 'survey-relation-item');
-    item.append(node('h3', null, `${from.year} ${from.displayTitle} · ${relation.displayLabel ?? '内容互补'} · ${to.year} ${to.displayTitle}`));
-    item.append(node('p', null, relation.reason));
-    const sources = node('p', 'survey-relation-evidence');
-    for (const [article, ids, prefix] of [[from, relation.fromUnitIds ?? [], '前一端'], [to, relation.toUnitIds ?? [], '后一端']]) {
-      for (const unitId of ids) {
-        const unit = article.units?.find((entry) => entry.id === unitId);
-        if (unit) {
-          const evidenceLink = link(unitHash(article.id, unit.id), `${prefix}：${unit.title}`, 'survey-evidence-link');
-          evidenceLink.addEventListener('click', () => rememberSurveyUnit(article, unit.id, null));
-          sources.append(evidenceLink);
-        }
-      }
-    }
-    if (sources.childNodes.length) item.append(sources);
-    relationDetails.append(item);
-  }
-
-  const renderSelection = () => {
-    for (const button of svg.querySelectorAll('[data-survey-id]')) {
-      const active = button.dataset.surveyId === selectedId;
-      button.classList.toggle('is-selected', active);
-      button.setAttribute('aria-pressed', String(active));
-    }
-    selectedDetails.replaceChildren();
-    const article = SURVEYS.articles.find((item) => item.id === selectedId);
-    if (!article) return;
-    selectedDetails.append(node('p', 'survey-selected-meta', `${article.year} · ${article.state === 'candidate' ? '待制作' : '部分内容已整理'}`));
-    selectedDetails.append(node('h2', null, article.displayTitle));
-    selectedDetails.append(node('p', 'survey-selected-summary', article.shelfLead ?? article.brief));
-    selectedDetails.append(link(hash(article.id), '打开文章脉络与阅读卡 →', 'survey-selected-action'));
-    const related = (SURVEYS.relations ?? []).filter((relation) => [relation.fromSurveyId, relation.toSurveyId].includes(article.id));
-    if (related.length) {
-      const relatedSection = node('div', 'survey-selected-relations');
-      relatedSection.append(node('h3', null, '与其他综述的联系'));
-      for (const relation of related) {
-        const otherId = relation.fromSurveyId === article.id ? relation.toSurveyId : relation.fromSurveyId;
-        const other = SURVEYS.articles.find((item) => item.id === otherId);
-        if (!other) continue;
-        const detail = node('details', 'survey-selected-relation');
-        detail.append(node('summary', null, `${relation.displayLabel ?? '内容互补'} · ${other.year} ${other.displayTitle}`));
-        detail.append(node('p', null, relation.reason));
-        const sources = node('p', 'survey-relation-evidence');
-        const leftArticle = SURVEYS.articles.find((item) => item.id === relation.fromSurveyId);
-        const rightArticle = SURVEYS.articles.find((item) => item.id === relation.toSurveyId);
-        for (const [sourceArticle, ids, prefix] of [[leftArticle, relation.fromUnitIds ?? [], '一端'], [rightArticle, relation.toUnitIds ?? [], '另一端']]) {
-          for (const unitId of ids) {
-            const unit = sourceArticle?.units?.find((entry) => entry.id === unitId);
-            if (unit) {
-              const evidenceLink = link(unitHash(sourceArticle.id, unit.id), `${prefix}章节：${unit.title}`, 'survey-evidence-link');
-              evidenceLink.addEventListener('click', () => rememberSurveyUnit(sourceArticle, unit.id, null));
-              sources.append(evidenceLink);
-            }
-          }
-        }
-        if (sources.childNodes.length) detail.append(sources);
-        relatedSection.append(detail);
-      }
-      selectedDetails.append(relatedSection);
-    }
-  };
-
-  for (const article of SURVEYS.articles) {
-    const position = positions[article.id];
-    if (!position) continue;
-    const group = svgNode('g', {
-      class: 'survey-cross-node', role: 'button', tabindex: 0,
-      'aria-label': `${article.year} · ${article.state === 'candidate' ? '待制作' : '部分内容已整理'} · ${article.displayTitle}`,
-      'aria-pressed': article.id === selectedId,
-      'data-survey-id': article.id,
-    });
-    group.dataset.surveyId = article.id;
-    group.append(svgNode('rect', { x: position.x, y: position.y, width: position.width, height: position.height, rx: 10 }));
-    group.append(svgNode('text', { x: position.x + 20, y: position.y + 25, class: 'survey-cross-node-meta' },
-      `${article.year} · ${article.state === 'candidate' ? '待制作' : '部分内容已整理'}`));
-    const titleLines = Array.from(article.displayTitle).reduce((lines, character) => {
-      if (!lines.length || Array.from(lines[lines.length - 1]).length >= 16) lines.push('');
-      lines[lines.length - 1] += character;
-      return lines;
-    }, []);
-    const title = svgNode('text', { x: position.x + 20, y: position.y + 59, class: 'survey-cross-node-title' });
-    titleLines.slice(0, 2).forEach((line, index) => title.append(svgNode('tspan', { x: position.x + 20, dy: index === 0 ? 0 : 23 }, line)));
-    group.append(title);
-    const select = () => {
-      selectedId = article.id;
-      try { sessionStorage.setItem(selectedKey, selectedId); } catch { /* Selection is optional view state. */ }
-      renderSelection();
-    };
-    group.addEventListener('click', select);
-    group.addEventListener('keydown', (event) => {
-      if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); select(); }
-    });
-    svg.append(group);
-  }
-  const canvas = node('div', 'survey-cross-canvas');
-  canvas.append(svg);
-  graph.append(canvas, node('p', 'survey-cross-legend', '虚线表示内容互补，不代表引用关系或必读先修。选择综述后，可查看关系依据及两端章节。'));
-  const preview = node('div', 'survey-cross-preview-column');
-  preview.append(selectedDetails, relationDetails);
-  layout.append(graph, preview);
-  root.append(layout);
-  renderSelection();
+  const detail = node('section', 'survey-shelf-detail');
+  detail.setAttribute('aria-label', '所选综述与关系');
+  const selectedAnnouncement = node('p', 'survey-shelf-announcement');
+  selectedAnnouncement.setAttribute('aria-live', 'polite');
+  const articleContent = node('div', 'survey-shelf-article-content');
+  const relationContent = node('div', 'survey-shelf-relations');
+  detail.append(selectedAnnouncement, articleContent, relationContent);
+  layout.append(catalog, detail);
+  page.append(layout);
 
   const background = node('p', 'survey-shelf-background');
   background.append(document.createTextNode('需要回顾 Agent 的基础发展时，'));
   background.append(link('#/map', '查看知识脉络图'));
-  root.append(background);
+  page.append(background);
 
-  const request = node('details', 'survey-request-note');
-  request.append(node('summary', null, '为其他主题生成综述阅读任务'));
-  request.append(node('p', null, '填写领域、关键词或指定文章后，页面会生成一份可交给 Agent 的制作任务。此处不会自动检索或调用模型。'));
+  const task = shelfUiState.task;
+  const request = node('details', 'survey-request-note'); request.open = task.expanded;
+  request.append(node('summary', null, '想了解其他领域？生成综述阅读任务'));
+  request.append(node('p', 'survey-request-intro', '按领域、关键词或指定文章准备一份可交给 Agent 的制作任务；需要你自行复制并执行。此处不会自动检索或调用模型。'));
   const form = node('form', 'survey-request-form');
-  const modeLabel = node('label', 'survey-request-label', '输入类型');
-  const mode = node('select');
-  mode.name = 'mode';
-  for (const [value, label] of [['topic', '领域'], ['keywords', '关键词'], ['paper', '指定文章']]) {
-    const option = node('option', null, label); option.value = value; mode.append(option);
+  const modeGroup = node('fieldset', 'survey-request-modes');
+  modeGroup.append(node('legend', null, '输入方式'));
+  const modes = [['topic', '领域'], ['keywords', '关键词'], ['paper', '指定文章']];
+  for (const [modeValue, labelText] of modes) {
+    const label = node('label', 'survey-request-mode');
+    const radio = node('input'); radio.type = 'radio'; radio.name = 'survey-request-mode'; radio.value = modeValue; radio.checked = task.mode === modeValue;
+    radio.addEventListener('change', () => {
+      if (!radio.checked) return;
+      task.mode = modeValue;
+      input.placeholder = modeValue === 'keywords' ? '例如：长期记忆、工具调用、评测'
+        : modeValue === 'paper' ? '输入文章题名、DOI 或公开链接' : '例如：多模态 Agent';
+      renderTaskPreview();
+    });
+    label.append(radio, document.createTextNode(labelText)); modeGroup.append(label);
   }
-  modeLabel.append(mode);
-  const valueLabel = node('label', 'survey-request-label', '你想了解什么');
-  const value = node('input'); value.required = true; value.maxLength = 500; value.placeholder = '例如：跨 harness 的异构 Agent 协作';
-  valueLabel.append(value);
-  const submit = node('button', 'survey-request-submit', '生成并复制 Agent 任务'); submit.type = 'submit';
-  const result = node('div', 'survey-request-result'); result.setAttribute('aria-live', 'polite');
-  form.append(modeLabel, valueLabel, submit, result);
-  form.addEventListener('submit', async (event) => {
+
+  const inputLabel = node('label', 'survey-request-label', '你想了解什么');
+  const input = node('input', 'survey-request-input'); input.type = 'text'; input.required = true; input.maxLength = 500;
+  input.placeholder = task.mode === 'keywords' ? '例如：长期记忆、工具调用、评测'
+    : task.mode === 'paper' ? '输入文章题名、DOI 或公开链接' : '例如：多模态 Agent';
+  input.value = task.value;
+  inputLabel.append(input);
+  const inputMeta = node('div', 'survey-request-input-meta');
+  const validation = node('span', 'survey-request-validation');
+  const length = node('span', 'survey-request-length', `${task.value.length} / 500`);
+  inputMeta.append(validation, length);
+  input.addEventListener('input', () => {
+    task.value = input.value;
+    length.textContent = `${task.value.length} / 500`;
+    validation.textContent = '';
+    renderTaskPreview();
+  });
+
+  const generate = node('button', 'survey-request-generate', '生成任务预览'); generate.type = 'submit';
+  const result = node('div', 'survey-request-result');
+  const clipboardStatus = node('p', 'survey-request-clipboard-status'); clipboardStatus.setAttribute('aria-live', 'polite');
+  form.append(modeGroup, inputLabel, inputMeta, generate, clipboardStatus, result);
+  request.addEventListener('toggle', () => { task.expanded = request.open; });
+  form.addEventListener('submit', (event) => {
     event.preventDefault();
-    const modeLabelText = mode.options[mode.selectedIndex]?.textContent ?? '领域';
-    const prompt = `请为我的研究阅读工作台制作一份综述阅读包。\n输入类型：${modeLabelText}\n输入内容：${value.value.trim()}\n\n要求：先确认文章身份与固定版本，再核对全文、关键图表和附录；提供少量有理由的选文，不把引用量或顶刊身份单独当成质量保证。按原文结构制作章节覆盖清单、内部关系与建议读序。阅读卡只作入口，正文要保留连贯解释、分类依据、比较、例子、条件和限制，不统一压缩字数。逐条给出准确章节/页码/图表定位；区分作者原意、编辑联系和自编例子；无法核对的内容标明缺口。不要把被综述引用的研究冒充为已独立阅读。生成前先确认我的本地来源/主题约束；不要复制、上传私人 PDF 或改写个人阅读记录。`;
-    result.replaceChildren(node('p', null, '任务文本已生成。'));
-    const textarea = node('textarea', 'survey-request-output'); textarea.readOnly = true; textarea.value = prompt; textarea.rows = 10;
-    result.append(textarea);
-    try {
-      await navigator.clipboard.writeText(prompt);
-      result.prepend(node('p', 'survey-request-status', '已复制到剪贴板；没有启动自动检索或模型调用。'));
-    } catch {
-      result.prepend(node('p', 'survey-request-status', '浏览器未允许自动复制，请手动复制下方任务文本。'));
-      textarea.focus(); textarea.select();
+    const cleanValue = String(input.value ?? '').trim();
+    if (!cleanValue) {
+      validation.textContent = '请先填写领域、关键词或文章题名。';
+      input.focus();
+      return;
     }
+    task.value = input.value;
+    const id = ++task.nextGenerationId;
+    task.generated = { id, mode: task.mode, value: cleanValue, text: surveyTaskPrompt(task.mode, cleanValue) };
+    task.copiedId = null;
+    task.clipboardNotice = '';
+    clipboardStatus.textContent = '';
+    renderTaskPreview();
   });
   request.append(form);
-  root.append(request);
+  page.append(request);
+  root.append(page);
+
+  function renderArticleList() {
+    articleList.replaceChildren();
+    const query = shelfUiState.query.trim().toLocaleLowerCase();
+    const filtered = articles.filter((article) => [article.displayTitle, article.title, article.shelfLead, article.brief, article.scope, article.year, article.id]
+      .filter(Boolean).join(' ').toLocaleLowerCase().includes(query));
+    count.textContent = query ? `匹配 ${filtered.length} / 共 ${articles.length} 篇` : `共 ${articles.length} 篇`;
+    if (query && !filtered.some((article) => article.id === shelfUiState.selectedId)) {
+      const note = node('p', 'survey-shelf-filter-note');
+      note.append(node('span', null, '当前选中的综述不在搜索结果中。'));
+      const clear = node('button', 'survey-shelf-clear-search', '清除搜索并定位到当前选择'); clear.type = 'button';
+      clear.addEventListener('click', () => {
+        search.value = ''; shelfUiState.query = ''; renderArticleList();
+        const selected = Array.from(articleList.childNodes).find((item) => item.dataset?.surveyId === shelfUiState.selectedId);
+        selected?.scrollIntoView?.({ block: 'nearest' });
+        selected?.focus?.();
+      });
+      note.append(clear); articleList.append(note);
+    }
+    for (const article of filtered) {
+      const title = article.displayTitle ?? article.title ?? '题名待补';
+      const choice = node('button', 'survey-shelf-choice'); choice.type = 'button';
+      choice.dataset.surveyId = article.id;
+      choice.setAttribute('aria-pressed', String(article.id === shelfUiState.selectedId));
+      choice.append(node('span', 'survey-shelf-choice-meta', `${article.year ?? '年份待核'} · ${surveyStatusLabel(article)}`));
+      choice.append(node('strong', 'survey-shelf-choice-title', title));
+      choice.append(node('span', 'survey-shelf-choice-summary', article.shelfLead ?? article.brief ?? '简介待补。'));
+      choice.addEventListener('click', () => chooseArticle(article.id));
+      articleList.append(choice);
+    }
+    if (filtered.length === 0) articleList.append(node('p', 'survey-shelf-empty', '没有找到匹配的综述。请更换关键词或清除搜索。'));
+  }
+
+  function renderArticleDetails() {
+    articleContent.replaceChildren(); relationContent.replaceChildren();
+    const article = articles.find((item) => item.id === shelfUiState.selectedId);
+    if (!article) {
+      articleContent.append(node('p', 'survey-shelf-empty', '当前还没有可展示的综述。'));
+      selectedAnnouncement.textContent = '';
+      return;
+    }
+    const title = article.displayTitle ?? article.title ?? '题名待补';
+    selectedAnnouncement.textContent = `已选择：${title}`;
+    articleContent.append(node('p', 'survey-selected-meta', `${article.year ?? '年份待核'} · ${surveyStatusLabel(article)}`));
+    articleContent.append(node('h2', 'survey-selected-title', title));
+    articleContent.append(node('p', 'survey-selected-summary', article.shelfLead ?? article.brief ?? '简介待补。'));
+    if (article.scope) {
+      articleContent.append(node('p', 'survey-selected-scope-label', '内容范围'));
+      articleContent.append(node('p', 'survey-selected-scope', article.scope));
+    }
+    const isCandidate = article.state === 'candidate' || !article.units?.length;
+    articleContent.append(link(hash(article.id), isCandidate ? '查看来源与待制作说明 →' : '进入这篇综述 →', 'survey-selected-action'));
+
+    const validRelations = relations.filter((relation) => {
+      const ids = [relation.fromSurveyId, relation.toSurveyId];
+      return ids.includes(article.id) && ids[0] !== ids[1] && ids.every((id) => articles.some((item) => item.id === id));
+    });
+    const neighbors = [];
+    const seen = new Set();
+    for (const relation of validRelations) {
+      const otherId = relation.fromSurveyId === article.id ? relation.toSurveyId : relation.fromSurveyId;
+      if (!seen.has(otherId)) { seen.add(otherId); neighbors.push(articles.find((item) => item.id === otherId)); }
+    }
+    const relationSection = node('section', 'survey-selected-relations');
+    relationSection.append(node('h3', 'survey-shelf-section-title', '与其他综述的联系'));
+    if (!neighbors.length) {
+      relationSection.append(node('p', 'survey-shelf-empty', '尚未整理与其他综述的联系；这不表示领域内不存在相关工作。'));
+      relationContent.append(relationSection);
+      return;
+    }
+    const neighborLabel = node('label', 'survey-relation-select-label', `关联综述 · 共 ${neighbors.length} 篇`);
+    const neighborSelect = node('select', 'survey-relation-select'); neighborSelect.setAttribute('aria-label', '选择关联综述');
+    let relationQuery = shelfUiState.relationQueryByArticle.get(article.id) ?? '';
+    let visibleNeighbors = neighbors;
+    if (neighbors.length > 8) {
+      const relationSearchLabel = node('label', 'survey-relation-search-label', '搜索关联综述');
+      const relationSearch = node('input', 'survey-relation-search'); relationSearch.type = 'search';
+      relationSearch.placeholder = '输入关联综述题名'; relationSearch.value = relationQuery;
+      relationSearch.setAttribute('aria-label', '搜索关联综述');
+      relationSearchLabel.append(relationSearch);
+      relationSection.append(relationSearchLabel);
+      relationSearch.addEventListener('input', () => {
+        relationQuery = relationSearch.value;
+        shelfUiState.relationQueryByArticle.set(article.id, relationQuery);
+        renderArticleDetails();
+        const nextSearch = relationContent.querySelector?.('.survey-relation-search');
+        if (nextSearch) { nextSearch.focus(); nextSearch.value = relationQuery; }
+      });
+    }
+    const normalizedRelationQuery = relationQuery.trim().toLocaleLowerCase();
+    if (normalizedRelationQuery) {
+      visibleNeighbors = neighbors.filter((neighbor) => {
+        const labels = validRelations.filter((relation) => [relation.fromSurveyId, relation.toSurveyId].includes(neighbor.id)).map((relation) => relation.displayLabel);
+        return [neighbor.displayTitle, neighbor.title, neighbor.year, ...labels].filter(Boolean).join(' ').toLocaleLowerCase().includes(normalizedRelationQuery);
+      });
+    }
+    const rememberedId = shelfUiState.relationByArticle.get(article.id);
+    const selectedNeighborId = visibleNeighbors.some((item) => item.id === rememberedId) ? rememberedId : visibleNeighbors[0]?.id ?? null;
+    if (selectedNeighborId) shelfUiState.relationByArticle.set(article.id, selectedNeighborId);
+    for (const neighbor of visibleNeighbors) {
+      const option = node('option', null, `${neighbor.year ?? '年份待核'} · ${neighbor.displayTitle ?? neighbor.title ?? '题名待补'}`);
+      option.value = neighbor.id; option.selected = neighbor.id === selectedNeighborId; neighborSelect.append(option);
+    }
+    if (neighbors.length > 8 && normalizedRelationQuery) {
+      relationSection.append(node('p', 'survey-relation-match-count', `匹配 ${visibleNeighbors.length} / ${neighbors.length} 篇`));
+    }
+    neighborSelect.disabled = visibleNeighbors.length === 0;
+    neighborLabel.append(neighborSelect);
+    relationSection.append(neighborLabel);
+    const pairDetail = node('div', 'survey-relation-pair');
+
+    function renderPair(neighborId) {
+      pairDetail.replaceChildren();
+      const neighbor = articles.find((item) => item.id === neighborId);
+      if (!neighbor) return;
+      pairDetail.append(node('h4', 'survey-relation-pair-title', neighbor.displayTitle ?? neighbor.title ?? '题名待补'));
+      const pairRelations = validRelations.filter((relation) =>
+        [relation.fromSurveyId, relation.toSurveyId].includes(neighbor.id));
+      for (const relation of pairRelations) {
+        const edge = node('article', 'survey-relation-card');
+        edge.append(node('p', 'survey-relation-kind', `${relation.displayLabel ?? '内容关系'} · ${relation.origin === 'editorial' ? '编辑整理的联系' : relation.origin === 'citation' ? '依据原文引用' : '关系性质未标明'}`));
+        edge.append(node('p', 'survey-relation-reason', relation.reason ?? '关系说明待补。'));
+        const from = articles.find((item) => item.id === relation.fromSurveyId);
+        const to = articles.find((item) => item.id === relation.toSurveyId);
+        const currentIsFrom = relation.fromSurveyId === article.id;
+        const currentUnitIds = currentIsFrom ? relation.fromUnitIds ?? [] : relation.toUnitIds ?? [];
+        const neighborUnitIds = currentIsFrom ? relation.toUnitIds ?? [] : relation.fromUnitIds ?? [];
+        const sides = node('div', 'survey-relation-sides');
+        for (const [sideArticle, ids, labelText] of [[article, currentUnitIds, '当前综述'], [neighbor, neighborUnitIds, '关联综述']]) {
+          const side = node('section', 'survey-relation-side');
+          side.append(node('h5', null, `${labelText} · ${sideArticle.displayTitle ?? sideArticle.title ?? '题名待补'}`));
+          const units = (ids ?? []).map((id) => sideArticle.units?.find((unit) => unit.id === id)).filter(Boolean);
+          if (!units.length) side.append(node('p', 'survey-relation-no-unit', ids?.length ? '章节编号未能解析，暂不提供链接。' : '章节入口尚未整理。'));
+          for (const unit of units) {
+            const unitLink = link(unitHash(sideArticle.id, unit.id), unit.title, 'survey-evidence-link');
+            unitLink.addEventListener('click', () => rememberSurveyUnit(sideArticle, unit.id, null));
+            side.append(unitLink);
+          }
+          sides.append(side);
+        }
+        edge.append(sides);
+        edge.append(link(hash(neighbor.id), '打开关联综述', 'survey-relation-open'));
+        const switchButton = node('button', 'survey-relation-switch', '切换到这篇'); switchButton.type = 'button';
+        switchButton.addEventListener('click', () => chooseArticle(neighbor.id, { reveal: true }));
+        edge.append(switchButton);
+        pairDetail.append(edge);
+      }
+    }
+
+    neighborSelect.value = selectedNeighborId;
+    neighborSelect.addEventListener('change', () => {
+      shelfUiState.relationByArticle.set(article.id, neighborSelect.value);
+      renderPair(neighborSelect.value);
+    });
+    if (selectedNeighborId) renderPair(selectedNeighborId);
+    else pairDetail.append(node('p', 'survey-shelf-empty', '没有匹配的关联综述。'));
+    relationSection.append(pairDetail);
+    relationContent.append(relationSection);
+  }
+
+  function chooseArticle(id, { reveal = false } = {}) {
+    if (!articles.some((item) => item.id === id)) return;
+    shelfUiState.selectedId = id;
+    try { sessionStorage.setItem(selectedKey, id); } catch { /* Only a convenience selection; storage is optional. */ }
+    const clearedQuery = reveal && Boolean(shelfUiState.query);
+    if (clearedQuery) { shelfUiState.query = ''; search.value = ''; }
+    renderArticleList();
+    renderArticleDetails();
+    if (reveal) {
+      const selectedButton = Array.from(articleList.childNodes).find((item) => item.dataset?.surveyId === id);
+      selectedButton?.scrollIntoView?.({ block: 'nearest' });
+      selectedButton?.focus?.();
+      if (clearedQuery) selectedAnnouncement.textContent = `已切换到：${articles.find((item) => item.id === id)?.displayTitle ?? id}；已清除综述搜索。`;
+    }
+  }
+
+  search.addEventListener('input', () => { shelfUiState.query = search.value; renderArticleList(); });
+  if (!articles.some((item) => item.id === shelfUiState.selectedId)) {
+    let restoredId = null;
+    try { restoredId = sessionStorage.getItem(selectedKey); } catch { /* Optional view state. */ }
+    shelfUiState.selectedId = articles.some((item) => item.id === restoredId) ? restoredId : articles[0]?.id ?? null;
+  }
+  renderArticleList(); renderArticleDetails();
+
+  function renderTaskPreview() {
+    result.replaceChildren();
+    const generated = task.generated;
+    if (!generated) { clipboardStatus.textContent = task.clipboardNotice; return; }
+    const isCurrent = generated.mode === task.mode && generated.value === String(input.value ?? '').trim();
+    const status = node('p', 'survey-request-status', isCurrent
+      ? task.copiedId === generated.id ? `第 ${generated.id} 版任务已复制；可重新生成新的预览。` : '任务已生成，尚未复制。'
+      : '输入已修改，请重新生成当前预览后再复制。');
+    result.append(node('h3', 'survey-request-preview-title', '任务预览'), status);
+    const textarea = node('textarea', 'survey-request-output'); textarea.readOnly = true; textarea.value = generated.text; textarea.rows = 8;
+    result.append(textarea);
+    const actions = node('div', 'survey-request-result-actions');
+    const pending = task.pendingCopyIds.has(generated.id);
+    const copy = node('button', 'survey-request-copy', pending ? '正在复制…' : task.copiedId === generated.id ? '已复制' : '复制任务');
+    copy.type = 'button'; copy.disabled = !isCurrent || pending || task.copiedId === generated.id;
+    copy.addEventListener('click', async () => {
+      if (!isCurrent || task.copiedId === generated.id || task.pendingCopyIds.has(generated.id)) return;
+      const snapshot = { id: generated.id, text: generated.text };
+      task.pendingCopyIds.add(snapshot.id);
+      copy.disabled = true; copy.textContent = '正在复制…';
+      let copied = false;
+      try {
+        if (typeof navigator === 'undefined' || typeof navigator.clipboard?.writeText !== 'function') throw new Error('clipboard unavailable');
+        await navigator.clipboard.writeText(snapshot.text);
+        const latestId = task.generated?.id;
+        const stillCurrent = latestId === snapshot.id
+          && task.mode === generated.mode
+          && String(input.value ?? '').trim() === generated.value;
+        copied = true;
+        if (stillCurrent) task.copiedId = snapshot.id;
+        task.clipboardNotice = stillCurrent
+          ? '已复制当前任务文本，请在 Agent 中自行执行。'
+          : latestId === snapshot.id
+            ? `第 ${snapshot.id} 版已复制；当前输入已修改，预览仍需重新生成。`
+            : `上一版任务（第 ${snapshot.id} 版）已复制；当前预览为第 ${latestId ?? '—'} 版，剪贴板内容仍是上一版。`;
+        if (stillCurrent) status.textContent = task.clipboardNotice;
+      } catch {
+        const latestId = task.generated?.id;
+        const stillCurrent = latestId === snapshot.id
+          && task.mode === generated.mode
+          && String(input.value ?? '').trim() === generated.value;
+        task.clipboardNotice = stillCurrent
+          ? '未能自动复制，可选择下方任务文本手动复制。'
+          : `上一版任务（第 ${snapshot.id} 版）未能自动复制；当前预览未改变，请使用当前预览，或重新生成原内容后复制。`;
+        if (stillCurrent) { textarea.focus(); textarea.select(); }
+      }
+      task.pendingCopyIds.delete(snapshot.id);
+      clipboardStatus.textContent = task.clipboardNotice;
+      const stillShown = task.generated?.id === snapshot.id
+        && task.mode === generated.mode
+        && String(input.value ?? '').trim() === generated.value;
+      if (stillShown) {
+        copy.disabled = copied || !stillCurrentSnapshot();
+        copy.textContent = copied ? '已复制' : '重试复制';
+        if (!copied) status.textContent = task.clipboardNotice;
+      }
+    });
+    const selectText = node('button', 'survey-request-select-text', '选择文本手动复制'); selectText.type = 'button';
+    selectText.addEventListener('click', () => { textarea.focus(); textarea.select(); });
+    actions.append(copy, selectText); result.append(actions);
+    clipboardStatus.textContent = task.clipboardNotice;
+  }
+
+  function stillCurrentSnapshot() {
+    const generated = task.generated;
+    return Boolean(generated && generated.mode === task.mode && generated.value === String(input.value ?? '').trim());
+  }
+
+  input.addEventListener('input', renderTaskPreview);
+  renderTaskPreview();
 }
 
 function renderCandidate(article, root) {

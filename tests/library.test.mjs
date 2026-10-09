@@ -66,6 +66,7 @@ import {
   sectionTitle,
   sortDirections,
   unitResources,
+  validateMaterialReadingLayout,
   validateLibrary,
 } from '../public/library.js';
 
@@ -767,6 +768,37 @@ test('coverageRows 与 paperSourceLink：来源信息完整，外链仅 https', 
   assert.equal(paperSourceLink({ url: 'javascript:alert(1)' }), null);
 });
 
+test('READING-015 W1：代表材料阅读映射完整，缺省与失效配置可识别', () => {
+  const material = LIBRARY.materials.find((item) => item.id === 'mat-cross-harness-map');
+  const valid = validateMaterialReadingLayout(material);
+  assert.deepEqual(valid, { ok: true, configured: true, errors: [] });
+  assert.deepEqual(
+    material.readingLayout.sections.map((section) => section.id),
+    ['scene', 'mechanisms', 'budget', 'examples', 'takeaway'],
+  );
+  assert.equal(material.body.blocks.length, 7, '五章与概念图应覆盖原有七个顶层块');
+
+  const withoutLayout = { ...material, readingLayout: undefined };
+  assert.deepEqual(validateMaterialReadingLayout(withoutLayout), { ok: true, configured: false, errors: [] });
+
+  const cases = [
+    [(copy) => { copy.readingLayout.sections[1].blockIds = ['missing-block']; }, /不存在的正文块/],
+    [(copy) => { copy.readingLayout.sections[0].blockIds = []; }, /blockIds 必须是非空数组|未映射或重复映射/],
+    [(copy) => { copy.readingLayout.sections[1].id = copy.readingLayout.sections[0].id; }, /章节 id 重复/],
+    [(copy) => { copy.readingLayout.sections[1].heading = copy.readingLayout.sections[0].heading; }, /章节标题重复/],
+    [(copy) => { copy.readingLayout.figure.targets.pop(); }, /缺少表格行/],
+    [(copy) => { copy.body.blocks.find((block) => block.id === 'four-layer-comparison').rows[0].pop(); }, /有效行标识/],
+    [(copy) => { copy.body.blocks.find((block) => block.id === 'four-layer-comparison').kind = 'paragraph'; }, /figure.blockId 必须指向现有 comparison/],
+  ];
+  for (const [mutate, message] of cases) {
+    const copy = structuredClone(material);
+    mutate(copy);
+    const result = validateMaterialReadingLayout(copy);
+    assert.equal(result.ok, false, message);
+    assert.match(result.errors.join('\n'), message);
+  }
+});
+
 test('briefItemTarget 与 safeExternalHref：各归其类，非 https 一律降级', () => {
   const lib = validLibrary();
   assert.deepEqual(briefItemTarget(lib, { paperId: 'p2' }), { kind: 'paper', paperId: 'p2' });
@@ -900,16 +932,20 @@ test('styles.css：旧版段已退役（文件自新版注释起），规则全�
   }
 });
 
-test('styles.css：字体职责与关键视觉值（正文中英无衬线 18px/1.9、标题栈、按钮与侧栏显式定色）', async () => {
+test('styles.css：阅读页暖纸色、字体角色与布局尺寸符合 READING-015 W1', async () => {
   const css = await readPublic('styles.css');
-  assert.match(css, /body\.lib\s*\{[^}]*--lib-side-bg:\s*#e7eef3/s);
-  assert.match(css, /body\.lib\s*\{[^}]*--lib-accent:\s*#096c63/s);
+  assert.match(css, /body\.lib\s*\{[^}]*--lib-bg:\s*#f8f7f3/s);
+  assert.match(css, /body\.lib\s*\{[^}]*--lib-side-bg:\s*#f2f1eb/s);
+  assert.match(css, /body\.lib\s*\{[^}]*--lib-accent:\s*#235e4c/s);
   assert.match(css, /--lib-serif:[^;]*SimSun/);
   assert.match(css, /--lib-font-read:[^;]*Microsoft YaHei/);
+  assert.match(css, /--lib-font-title:\s*"Noto Serif CJK SC"/);
   assert.match(css, /\.lib-shell\s*\{[^}]*grid-template-columns:\s*208px/s);
   assert.match(css, /\.lib-article\s*\{[^}]*font-size:\s*18px/s);
   assert.match(css, /\.lib-article\s*\{[^}]*line-height:\s*1\.9/s);
   assert.match(css, /\.lib-article\s*\{[^}]*max-width:\s*45rem/s);
+  assert.match(css, /\.lib-reading\.lib-reading-material\s*\{[^}]*grid-template-areas:\s*"hero rail" "article rail"/s);
+  assert.match(css, /\.lib-reading-material\[data-reader-size="large"\]\s*\{[^}]*--lib-reader-size:\s*20px/s);
   assert.match(css, /@media\s*\(max-width:\s*1100px\)[\s\S]*?\.survey-atlas-detail\s*\{[^}]*grid-row:\s*4;[^}]*position:\s*static;[^}]*max-height:\s*none;[^}]*overflow:\s*visible/s,
     '窄屏章节预览应按页面流完整展开，避免遮挡图并保留阅读入口');
   assert.match(css, /\.survey-atlas-graph-panel\s*\{[^}]*grid-row:\s*5/s, '窄屏图应排在所选章节预览之后');

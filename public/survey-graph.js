@@ -19,6 +19,37 @@ const button = (label, action, cls = '') => {
 };
 export const surveyUnitUrl = (articleId, unitId) => `#/survey/${encodeURIComponent(articleId)}/unit/${encodeURIComponent(unitId)}`;
 
+export function wrapSurveyText(value, maxWidth, fontSize = 16, weight = 600) {
+  const text = String(value ?? '').trim();
+  if (!text) return [];
+  let context = null;
+  try {
+    const canvas = document.createElement('canvas');
+    context = canvas.getContext('2d');
+    if (context) {
+      const fontStack = getComputedStyle(document.body).getPropertyValue('--lib-font-ui').trim()
+        || getComputedStyle(document.body).fontFamily || 'system-ui, sans-serif';
+      context.font = `${weight} ${fontSize}px ${fontStack}`;
+    }
+  } catch { /* Use a predictable character-width estimate when canvas is unavailable. */ }
+  const measure = (line) => context
+    ? context.measureText(line).width
+    : Array.from(line).reduce((width, char) => width + (/\s/.test(char) ? fontSize * .32 : /[A-Za-z0-9]/.test(char) ? fontSize * .56 : fontSize), 0);
+  const lines = [];
+  let line = '';
+  for (const char of Array.from(text)) {
+    const next = line + char;
+    if (line && measure(next) > maxWidth) {
+      lines.push(line.trimEnd());
+      line = char.trimStart();
+    } else {
+      line = next;
+    }
+  }
+  if (line.trim()) lines.push(line.trimEnd());
+  return lines;
+}
+
 export function validateTopicMap(article) {
   const errors = [];
   if (!article.topicMap) {
@@ -52,10 +83,35 @@ export function validateTopicMap(article) {
 
 export function articleGraphModel(article, collapsed = [], readingPathId = null) {
   const groups = article.topicMap?.groups ?? [];
-  const nodes = groups.flatMap((group, column) => group.items.map((item, row) => ({
-    ...item, groupId: group.id, column, row, unit: article.units.find((unit) => unit.id === item.unitId),
-    visible: !collapsed.includes(group.id), x: column * 306 + 34, y: row * 108 + 190, width: 244, height: 84,
-  })));
+  const columnWidth = 306;
+  const nodeWidth = 244;
+  const groupX = (column) => column * columnWidth + 34;
+  const groupTitleLines = new Map(groups.map((group) => [group.id, wrapSurveyText(group.label, 205, 16, 650)]));
+  const groupSubtitleLines = new Map(groups.map((group) => [
+    group.id,
+    wrapSurveyText(`${group.subtitle} · ${group.items.length} 节`, 205, 13, 400),
+  ]));
+  const headerHeight = Math.max(78, ...groups.map((group) => {
+    const titleLines = groupTitleLines.get(group.id)?.length ?? 1;
+    const subtitleLines = groupSubtitleLines.get(group.id)?.length ?? 1;
+    return 14 + titleLines * 18 + 4 + subtitleLines * 16 + 10;
+  }));
+  const nodeStartY = 98 + headerHeight + 18;
+  const nodes = [];
+  const groupHeights = [];
+  groups.forEach((group, column) => {
+    let y = nodeStartY;
+    for (const [row, item] of group.items.entries()) {
+      const titleLines = wrapSurveyText(item.label, nodeWidth - 34, 16, 600);
+      const height = 78 + Math.max(0, titleLines.length - 1) * 20;
+      nodes.push({
+        ...item, groupId: group.id, column, row, unit: article.units.find((unit) => unit.id === item.unitId),
+        visible: !collapsed.includes(group.id), x: groupX(column), y, width: nodeWidth, height, titleLines,
+      });
+      y += height + 14;
+    }
+    groupHeights.push(y - 14);
+  });
   const path = article.readingPaths?.find((entry) => entry.id === readingPathId) ?? article.readingPaths?.[0];
   const steps = path?.steps ?? [];
   const reading = steps.slice(1).map((step, i) => ({
@@ -63,12 +119,17 @@ export function articleGraphModel(article, collapsed = [], readingPathId = null)
   }));
   return {
     groups, nodes, relations: (article.topicMap?.relations ?? []).map((edge) => ({ ...edge, kind: 'relation' })), reading,
-    width: groups.length * 306 + 6,
-    height: Math.max(1, ...groups.map((group) => collapsed.includes(group.id) ? 0 : group.items.length)) * 108 + 205,
+    width: Math.max(1, groups.length) * columnWidth + 6,
+    height: Math.max(98 + headerHeight + 18, ...groups.map((group, index) => collapsed.includes(group.id) ? 0 : groupHeights[index])) + 34,
+    groupTitleLines, groupSubtitleLines, headerHeight,
   };
 }
 
-export function normalizeMapState(article, saved = {}) {
+function defaultMapLayout() {
+  return typeof window !== 'undefined' && window.matchMedia?.('(max-width: 1100px)').matches ? 'list' : 'graph';
+}
+
+export function normalizeMapState(article, saved = {}, fallbackLayout = 'graph') {
   const groups = article.topicMap.groups;
   const ids = new Set(article.units.map((unit) => unit.id));
   const readingPath = article.readingPaths?.find((path) => path.id === saved.readingPathId) ?? null;
@@ -79,7 +140,7 @@ export function normalizeMapState(article, saved = {}) {
   return {
     selected: ids.has(saved.selected) ? saved.selected : article.readingPaths?.[0]?.steps[0]?.unitId ?? article.units[0].id,
     collapsed: Array.isArray(saved.collapsed) ? saved.collapsed.filter((id) => groups.some((g) => g.id === id)) : groups.filter((g) => g.collapsed).map((g) => g.id),
-    layout: ['graph', 'list', 'reading'].includes(saved.layout) ? saved.layout : 'graph',
+    layout: ['graph', 'list', 'reading'].includes(saved.layout) ? saved.layout : fallbackLayout,
     readingPathId: readingPath?.id ?? null,
     readingPathUnitId: ids.has(saved.readingPathUnitId) ? saved.readingPathUnitId : null,
     readingPathUnitIds: [...new Set(savedPathUnits.filter((id) => pathUnitIds.has(id)))],
@@ -93,7 +154,7 @@ export function normalizeMapState(article, saved = {}) {
 export function surveyMapState(article) {
   let saved;
   try { saved = JSON.parse(sessionStorage.getItem(`survey-map-v1:${article.id}`) || '{}'); } catch { /* View state is optional. */ }
-  return normalizeMapState(article, saved && typeof saved === 'object' ? saved : {});
+  return normalizeMapState(article, saved && typeof saved === 'object' ? saved : {}, defaultMapLayout());
 }
 
 // Keep the path active for units explicitly entered from it during this
@@ -112,7 +173,9 @@ export function rememberSurveyUnit(article, unitId, readingPathId = undefined) {
   try {
     const key = `survey-map-v1:${article.id}`;
     const raw = JSON.parse(sessionStorage.getItem(key) || '{}');
-    const state = normalizeMapState(article, raw && typeof raw === 'object' ? raw : {});
+    const saved = raw && typeof raw === 'object' ? raw : {};
+    const hasExplicitLayout = ['graph', 'list', 'reading'].includes(saved.layout);
+    const state = normalizeMapState(article, saved, defaultMapLayout());
     state.selected = unitId;
     if (readingPathId !== undefined) {
       const nextPathId = article.readingPaths?.some((path) => path.id === readingPathId) ? readingPathId : null;
@@ -129,6 +192,7 @@ export function rememberSurveyUnit(article, unitId, readingPathId = undefined) {
     }
     const parent = article.topicMap.groups.find((group) => group.items.some((item) => item.unitId === unitId));
     state.collapsed = state.collapsed.filter((id) => id !== parent?.id);
+    if (!hasExplicitLayout) delete state.layout;
     sessionStorage.setItem(key, JSON.stringify(state));
   } catch { /* Navigation still works if session storage is unavailable. */ }
 }
@@ -138,7 +202,7 @@ export function renderArticleGraph(article, root) {
   const storageKey = `survey-map-v1:${article.id}`;
   let saved;
   try { saved = JSON.parse(sessionStorage.getItem(storageKey) || '{}'); } catch { /* Storage is optional. */ }
-  let state = normalizeMapState(article, saved && typeof saved === 'object' ? saved : {});
+  let state = normalizeMapState(article, saved && typeof saved === 'object' ? saved : {}, defaultMapLayout());
   const persist = () => { try { sessionStorage.setItem(storageKey, JSON.stringify(state)); } catch { /* No reading progress is stored. */ } };
   const section = el('section', 'survey-atlas'); section.id = 'survey-atlas';
   section.append(el('h2', null, '整篇脉络图'), el('p', 'survey-atlas-intro', article.topicMap.intro));
@@ -275,7 +339,9 @@ export function renderArticleGraph(article, root) {
     svg.replaceChildren(svgEl('title', {}, article.topicMap.title));
     svg.setAttribute('viewBox', `0 0 ${model.width} ${model.height}`);
     svg.style.width = `${state.zoom * 100}%`;
-    svg.style.minWidth = `${Math.min(900, model.width) * state.zoom}px`;
+    // Keep node labels at their designed screen size. If the canvas is narrower
+    // than its viewBox, let its viewport scroll instead of scaling all text down.
+    svg.style.minWidth = `${model.width * state.zoom}px`;
     zoomLabel.value = `${Math.round(state.zoom * 100)}%`;
     const defs = svgEl('defs');
     for (const kind of ['relation', 'reading']) {
@@ -293,10 +359,13 @@ export function renderArticleGraph(article, root) {
       const closed = state.collapsed.includes(group.id);
       svg.append(svgEl('path', { d: `M ${center} 57 V 77 H ${x + 122} V 98`, class: 'survey-atlas-contains' }));
       const heading = svgEl('g', { class: 'survey-atlas-group', role: 'button', tabindex: 0, 'aria-label': `${closed ? '展开' : '收起'}${group.label}`, 'aria-expanded': !closed, 'data-group-id': group.id });
-      heading.append(svgEl('rect', { x, y: 98, width: 244, height: 65, rx: 6 }),
-        svgEl('text', { x: x + 16, y: 124, class: 'survey-atlas-group-title' }, group.label),
-        svgEl('text', { x: x + 16, y: 147, class: 'survey-atlas-group-subtitle' }, `${group.subtitle} · ${group.items.length} 节`),
-        svgEl('text', { x: x + 220, y: 124, 'text-anchor': 'middle' }, closed ? '+' : '−'));
+      heading.append(svgEl('rect', { x, y: 98, width: 244, height: model.headerHeight, rx: 6 }));
+      const title = svgEl('text', { x: x + 16, y: 119, class: 'survey-atlas-group-title' });
+      model.groupTitleLines.get(group.id).forEach((line, index) => title.append(svgEl('tspan', { x: x + 16, dy: index ? 18 : 0 }, line)));
+      heading.append(title);
+      const subtitle = svgEl('text', { x: x + 16, y: 123 + model.groupTitleLines.get(group.id).length * 18, class: 'survey-atlas-group-subtitle' });
+      model.groupSubtitleLines.get(group.id).forEach((line, index) => subtitle.append(svgEl('tspan', { x: x + 16, dy: index ? 16 : 0 }, line)));
+      heading.append(subtitle, svgEl('text', { x: x + 220, y: 119, 'text-anchor': 'middle' }, closed ? '+' : '−'));
       const activate = () => {
         state.collapsed = closed ? state.collapsed.filter((id) => id !== group.id) : [...state.collapsed, group.id];
         persist(); draw(); svg.querySelector(`[data-group-id="${group.id}"]`)?.focus();
@@ -305,7 +374,7 @@ export function renderArticleGraph(article, root) {
       heading.addEventListener('keydown', (event) => { if (['Enter', ' '].includes(event.key)) { event.preventDefault(); activate(); } });
       svg.append(heading);
       if (!closed) for (const item of model.nodes.filter((n) => n.groupId === group.id)) {
-        svg.append(svgEl('path', { d: `M ${x + 8} 163 H ${x - 16} V ${item.y + 42} H ${x}`, class: 'survey-atlas-contains' }));
+        svg.append(svgEl('path', { d: `M ${x + 8} ${98 + model.headerHeight} H ${x - 16} V ${item.y + item.height / 2} H ${x}`, class: 'survey-atlas-contains' }));
       }
     });
     const paths = svgEl('g', { class: 'survey-atlas-relationships' });
@@ -315,7 +384,7 @@ export function renderArticleGraph(article, root) {
       const to = model.nodes.find((n) => n.unitId === edge.to && n.visible);
       if (!from || !to) return;
       // Route through gutters, never through another chapter's text.
-      const sx = from.x + from.width, sy = from.y + 42, tx = to.x + to.width, ty = to.y + 42;
+      const sx = from.x + from.width, sy = from.y + from.height / 2, tx = to.x + to.width, ty = to.y + to.height / 2;
       const laneA = sx + 12 + index * 4, laneB = tx + 12 + index * 4, top = 174 + index * 3;
       const d = from.column === to.column ? `M ${sx} ${sy} H ${laneA} V ${ty} H ${tx}`
         : `M ${sx} ${sy} H ${laneA} V ${top} H ${laneB} V ${ty} H ${tx}`;
@@ -342,15 +411,16 @@ export function renderArticleGraph(article, root) {
         role: 'button', tabindex: 0, 'aria-label': `${item.section} ${item.label}，查看内容与联系`, 'aria-pressed': selected, 'data-unit-id': item.unitId });
       group.append(svgEl('rect', { x: item.x, y: item.y, width: item.width, height: item.height, rx: 7 }),
         svgEl('text', { x: item.x + 15, y: item.y + 22, class: 'survey-atlas-section' }, item.section));
-      const chars = Array.from(item.label);
-      for (let i = 0; i < chars.length; i += 15) group.append(svgEl('text', { x: item.x + 15, y: item.y + 45 + i / 15 * 21, class: 'survey-atlas-node-title' }, chars.slice(i, i + 15).join('')));
+      item.titleLines.forEach((line, index) => group.append(svgEl('text', {
+        x: item.x + 15, y: item.y + 43 + index * 20, class: 'survey-atlas-node-title',
+      }, line)));
       group.addEventListener('click', () => select(item.unitId));
       group.addEventListener('keydown', (event) => {
         if (['Enter', ' '].includes(event.key)) { event.preventDefault(); select(item.unitId); }
       });
       svg.append(group);
       const read = svgEl('a', { href: surveyUnitUrl(article.id, item.unitId), 'aria-label': `阅读${item.label}`, class: 'survey-atlas-read' });
-      read.append(svgEl('text', { x: item.x + item.width - 14, y: item.y + 22, 'text-anchor': 'end' }, '阅读 ↗'));
+      read.append(svgEl('text', { x: item.x + item.width - 14, y: item.y + item.height - 9, 'text-anchor': 'end' }, '阅读 ↗'));
       read.addEventListener('click', () => rememberSurveyUnit(article, item.unitId, null)); svg.append(read);
     }
     svg.append(badges);

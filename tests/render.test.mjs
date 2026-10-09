@@ -25,11 +25,25 @@ class DomNode {
     this.textContentValue = '';
     this.style = {};
     this.parentNode = null;
+    this.mockRect = null;
   }
   appendChild(child) {
     if (!child) throw new Error(`appendChild 收到空节点（${this.tagName}）`);
     child.parentNode = this;
     this.childNodes.push(child);
+    return child;
+  }
+  insertBefore(child, reference) {
+    if (child === reference) return child;
+    if (child.parentNode) {
+      const previousIndex = child.parentNode.childNodes.indexOf(child);
+      if (previousIndex >= 0) child.parentNode.childNodes.splice(previousIndex, 1);
+    }
+    const index = reference == null ? -1 : this.childNodes.indexOf(reference);
+    if (reference != null && index < 0) throw new Error('insertBefore reference 不属于当前节点');
+    if (index < 0) this.childNodes.push(child);
+    else this.childNodes.splice(index, 0, child);
+    child.parentNode = this;
     return child;
   }
   append(...children) {
@@ -45,13 +59,17 @@ class DomNode {
   getAttribute(name) { return this.attributes[name] ?? null; }
   removeAttribute(name) { delete this.attributes[name]; }
   addEventListener(name, fn) { (this.listeners[name] ??= []).push(fn); }
-  scrollIntoView() {}
+  scrollIntoView(options) { this.scrollOptions = options ?? {}; }
+  getBoundingClientRect() {
+    if (typeof this.mockRect === 'function') return this.mockRect();
+    return this.mockRect ?? { top: 0, bottom: 0, height: 0 };
+  }
   scrollTo(left, top) { this.scrollLeft = left; this.scrollTop = top; }
   click() {
     for (const fn of this.listeners.click ?? []) fn();
   }
   remove() { /* 桩内无需真实摘除 */ }
-  focus() {}
+  focus() { this.focused = true; }
   select() {}
   prepend(child) { this.childNodes.unshift(child); return child; }
   querySelectorAll(selector) {
@@ -78,7 +96,9 @@ class DomNode {
   closest(selector) {
     const wanted = String(selector).toLowerCase();
     for (let node = this; node; node = node.parentNode) {
-      if (node.tagName.toLowerCase() === wanted) return node;
+      if (wanted.startsWith('.')) {
+        if (node.className.split(/\s+/).includes(wanted.slice(1))) return node;
+      } else if (node.tagName.toLowerCase() === wanted) return node;
     }
     return null;
   }
@@ -86,6 +106,11 @@ class DomNode {
   set className(value) { this.attributes.class = String(value); }
   get id() { return this.attributes.id ?? ''; }
   set id(value) { this.attributes.id = String(value); }
+  get nextSibling() {
+    if (!this.parentNode) return null;
+    const index = this.parentNode.childNodes.indexOf(this);
+    return this.parentNode.childNodes[index + 1] ?? null;
+  }
   get href() { return this.attributes.href ?? ''; }
   set href(value) { this.attributes.href = String(value); }
   get classList() {
@@ -144,16 +169,30 @@ const document = {
   createElement: (tag) => new DomNode(tag),
   createElementNS: (_namespace, tag) => new DomNode(tag),
   createTextNode: (text) => new TextNode(text),
-  getElementById: (id) => byId.get(id) ?? null,
+  getElementById: (id) => {
+    const direct = byId.get(id);
+    if (direct) return direct;
+    const root = byId.get('lib-view');
+    const stack = root ? [root] : [];
+    while (stack.length > 0) {
+      const node = stack.pop();
+      if (node.id === id) return node;
+      for (const child of node.childNodes ?? []) if (child instanceof DomNode) stack.push(child);
+    }
+    return null;
+  },
+  querySelector: (selector) => selector === '.lib-view' ? byId.get('lib-view') ?? null : null,
   querySelectorAll: () => [],
   body: null,
 };
 document.body = new DomNode('body');
 
-for (const id of ['lib-view', 'lib-quick']) mountElement(id);
+for (const id of ['lib-shell', 'lib-view', 'lib-quick']) mountElement(id);
 
 let viewportWide = true;
+let prefersReducedMotion = false;
 let hashHandler = null;
+const windowListeners = new Map();
 // localStorage 桩：记录全部键访问，用于断言 v3 不碰 v1/v2、发现查询不写记录。
 const storageData = new Map();
 const storageCalls = [];
@@ -177,8 +216,20 @@ const window = {
   navigator: {},
   addEventListener: (name, fn) => {
     if (name === 'hashchange') hashHandler = fn;
+    else (windowListeners.get(name) ?? windowListeners.set(name, []).get(name)).push(fn);
   },
-  matchMedia: (query) => ({ matches: query.includes('max-width') ? !viewportWide : viewportWide }),
+  removeEventListener: (name, fn) => {
+    if (name !== 'hashchange') windowListeners.set(name, (windowListeners.get(name) ?? []).filter((listener) => listener !== fn));
+  },
+  matchMedia: (query) => ({
+    matches: query.includes('max-width')
+      ? !viewportWide
+      : query.includes('min-width')
+        ? viewportWide
+        : query.includes('prefers-reduced-motion')
+          ? prefersReducedMotion
+          : false,
+  }),
 };
 
 // 发现接口桩：默认返回固定载荷；测试可替换。
@@ -229,6 +280,7 @@ globalThis.window = window;
 
 // 全局就绪后再加载模块：模块顶层会立即渲染一次（空 hash → 首页）。
 const lib = await import(new URL('../public/library.js', import.meta.url).href);
+let activeRenderer = lib;
 
 function renderAt(hash) {
   if (typeof hashHandler !== 'function') throw new Error('模块未注册 hashchange 监听');
@@ -297,14 +349,32 @@ test('渲染探针：全部视图渲染成功且无 undefined/NaN 文本', () =>
   }
 });
 
-test('READING-014（DOM）：离开综述后清理共享容器的专属样式', () => {
+test('READING-014 / READING-016（DOM）：跨页清理综述及目录宽度类，包括无效路由', () => {
   const view = byId.get('lib-view');
+  renderAt('#/surveys');
+  assert.equal(byId.get('lib-shell').classList.contains('is-browse-polish'), true, '综述主页使用带栏目侧栏的浏览布局');
+  assert.equal(byId.get('lib-shell').classList.contains('is-graph'), false, '综述目录不能被图谱布局隐藏侧栏');
+  assert.equal(view.classList.contains('survey-shelf-view'), true, '综述目录使用独立宽度');
+  renderAt(`#/survey/${SURVEYS.articles[0].id}`);
+  assert.equal(byId.get('lib-shell').classList.contains('is-graph'), true, '单篇综述图继续使用图谱布局');
+  assert.equal(byId.get('lib-shell').classList.contains('is-browse-polish'), false, '单篇图不继承综述目录布局');
   view.classList.add('survey-view'); // 模拟刚离开综述页时留下的旧状态。
   renderAt('#/home');
   assert.equal(view.classList.contains('survey-view'), false, '首页不得继承综述字号与宽度');
+  assert.equal(view.classList.contains('survey-shelf-view'), false, '首页不得继承综述书架的宽度');
+  assert.equal(byId.get('lib-shell').classList.contains('is-browse-polish'), true, '首页使用目标目录布局壳');
   view.classList.add('survey-view');
   renderAt('#/papers');
   assert.equal(view.classList.contains('survey-view'), false, '论文库不得继承综述字号与宽度');
+  assert.equal(byId.get('lib-shell').classList.contains('is-browse-polish'), true, '论文索引使用目标目录布局壳');
+  renderAt('#/foundations');
+  assert.equal(byId.get('lib-shell').classList.contains('is-browse-polish'), true, '经典书目使用目标目录布局壳');
+  renderAt('#/survey/not-a-real-survey');
+  assert.equal(view.classList.contains('survey-shelf-view'), false, '缺失综述详情不得继承书架目录宽度');
+  assert.equal(byId.get('lib-shell').classList.contains('is-browse-polish'), false, '缺失综述详情清除目录布局壳');
+  renderAt('#/missing-route');
+  assert.equal(view.classList.contains('survey-shelf-view'), false, '非法地址在 not-found early return 前清除书架类');
+  assert.equal(byId.get('lib-shell').classList.contains('is-browse-polish'), false, '非法地址不保留目录壳类');
 });
 
 // ---------- 2) 目录与正文逐项一致（回流项 1 的 DOM 断言） ----------
@@ -568,10 +638,11 @@ test('经典书目（DOM）：四组分组渲染、组内论文齐备、标注�
 
 test('READING-014（DOM）：论文书库按路线范围切换、搜索恢复、基础导读可回查且全量不重复', () => {
   const view = renderAt('#/papers');
-  const scope = collectByClass(view, 'lib-paper-scope')[0];
+  const scopes = collectByClass(view, 'lib-paper-scope-option');
   const search = collectByClass(view, 'lib-paper-search')[0];
-  assert.ok(scope && search, '论文库应提供范围选择与搜索');
-  assert.equal(scope.value, 'primary', '默认先看主方向起步论文');
+  assert.ok(scopes.length === 4 && search, '论文库应提供四个范围按钮与搜索');
+  assert.equal(scopes.find((button) => button.dataset.scope === 'primary').getAttribute('aria-pressed'), 'true', '默认先看主方向起步论文');
+  const chooseScope = (value) => clickFirst(view, (button) => button.className.split(/\s+/).includes('lib-paper-scope-option') && button.dataset.scope === value).click();
   assert.ok(view.textContent.includes('Beyond Frameworks'), '主方向起步列表可扫描');
   assert.ok(collectLinks(view).includes('#/paper/beyond-frameworks?route=cross-harness-collab&track=start'), '主方向书库入口保留路线来路');
   assert.ok(!view.textContent.includes('Attention Is All You Need'), '基础经典单独从经典书目进入');
@@ -587,16 +658,13 @@ test('READING-014（DOM）：论文书库按路线范围切换、搜索恢复、
   clear.listeners.click[0]();
   assert.equal(collectByClass(view, 'lib-paper-item').length, 4, '清空搜索恢复主方向起步列表');
 
-  scope.value = 'secondary';
-  scope.listeners.change[0]();
+  chooseScope('secondary');
   assert.ok(view.textContent.includes('代码智能体的修复正确性'), '可切换到第二方向起步文献');
   assert.ok(collectLinks(view).includes('#/paper/tosem2025-acceptance?route=code-agent-verification&track=start'), '第二方向论文入口保留路线来路');
-  scope.value = 'expanded';
-  scope.listeners.change[0]();
+  chooseScope('expanded');
   assert.ok(view.textContent.includes('拓展阅读'), '拓展范围显示路线归属');
 
-  scope.value = 'all';
-  scope.listeners.change[0]();
+  chooseScope('all');
   const visiblePapers = collectByClass(view, 'lib-paper-item');
   assert.equal(visiblePapers.length, LIBRARY.papers.filter((paper) => paper.collection !== 'foundations').length, '全量范围包含所有非经典论文且不重复');
   const links = collectLinks(view);
@@ -660,10 +728,25 @@ test('READING-014（DOM）：经典书目搜索保留主题分组并在无结果
   const search = collectByClass(view, 'lib-paper-search')[0];
   assert.ok(search, '经典书目应复用论文列表搜索');
   assert.equal(collectByClass(view, 'lib-paper-item').length, LIBRARY.papers.filter((paper) => paper.collection === 'foundations').length);
+  const topicButtons = collectByClass(view, 'lib-foundation-index-item');
+  assert.equal(topicButtons.length, LIBRARY.foundations.groups.length, '主题入口直接来自现有分组');
+  const targetTopic = topicButtons.find((button) => button.dataset.groupKey !== topicButtons[0].dataset.groupKey);
+  const targetGroup = collectByClass(view, 'lib-paper-group').find((group) => group.dataset.groupKey === targetTopic.dataset.groupKey);
+  const targetHeading = targetGroup.childNodes.find((child) => child.tagName === 'H3');
+  // 浏览器 childNodes 是 NodeList，没有 Array.find；数组桩不能掩盖这一差异。
+  collectByClass(view, 'lib-paper-results')[0].childNodes.find = undefined;
+  targetGroup.childNodes.find = undefined;
+  const originalHash = window.location.hash;
+  targetTopic.click();
+  assert.equal(window.location.hash, originalHash, '主题跳转不写入路由 hash');
+  assert.equal(targetHeading.focused, true, '主题跳转后聚焦目标组标题');
+  assert.deepEqual(targetGroup.scrollOptions, { block: 'start' }, '目标主题滚入可视范围');
+
   search.value = 'Attention Is All You Need';
   search.listeners.input[0]();
   assert.equal(collectByClass(view, 'lib-paper-item').length, 1, '搜索后隐藏不匹配的主题组');
   assert.ok(view.textContent.includes('架构'), '命中论文仍保留主题分组');
+  assert.equal(collectByClass(view, 'lib-foundation-index-item').filter((button) => !button.disabled).length, 1, '搜索后主题索引匹配数同步，其他主题禁用');
   search.value = 'not-a-foundation';
   search.listeners.input[0]();
   assert.ok(view.textContent.includes('没有找到匹配的论文'), '经典书目空结果明确');
@@ -702,9 +785,7 @@ test('v3（DOM）：论文页有“我的记录”面板，保存后只写 v3 �
   assert.deepEqual(badReads, [], '除 v3 与导学覆盖层键外不得触碰任何其它存储键（含 v1/v2）');
   // 保存后重渲染：论文列表显示“我的状态”
   const list = renderAt('#/papers');
-  const scope = collectByClass(list, 'lib-paper-scope')[0];
-  scope.value = 'all';
-  scope.listeners.change[0]();
+  clickFirst(list, (button) => button.className.split(/\s+/).includes('lib-paper-scope-option') && button.dataset.scope === 'all').click();
   assert.ok(list.textContent.includes('我的状态：在读（本人标记）'), '列表应显示本人标记状态');
   assert.ok(list.textContent.includes('导出我的记录（Markdown）'), '缺导出按钮');
   assert.ok(list.textContent.includes('我的待读清单'), '缺待读清单区');
@@ -1392,6 +1473,7 @@ test('DG009-C（DOM 全链路）：粘贴→预览（不落盘）→采纳写入
   assert.equal(storageCalls.filter(([op]) => op === 'setItem').length, 0, '渲染阶段不得写任何键');
   // 重载（新模块实例、同存储）⇒ 变化仍在（确认后再打开仍有变化，R2）
   const fresh = await import(new URL('../public/library.js?reload=1', import.meta.url).href);
+  activeRenderer = fresh;
   assert.ok(fresh.currentGuidanceOverlay() !== null, '新会话从存储重建覆盖层');
   view = renderAt('#/route/cross-harness-collab?section=start&step=step-collab-3');
   assert.ok(view.textContent.includes('页面走查后的新目的。'), '重载后生效变化仍在');
@@ -1454,7 +1536,7 @@ test('DG009-C（DOM，R6 两规则）：示例横幅从持久字段重建、重�
   assert.ok(view.textContent.includes('示例 · 非真实指导'), '地图页须常驻示例横幅');
   assert.equal(collectByClass(view, 'lib-map-node').length, 11, '生效节点 10+1');
   // 重载后横幅与节点仍在（从持久 example 字段重建，R8-C 断言项）
-  await import(new URL('../public/library.js?reload=2', import.meta.url).href);
+  activeRenderer = await import(new URL('../public/library.js?reload=2', import.meta.url).href);
   view = renderAt('#/map');
   assert.ok(view.textContent.includes('走查示例节点') && view.textContent.includes('示例 · 非真实指导'), '重载后示例横幅与节点仍在');
 });
@@ -1825,4 +1907,393 @@ test('PLAN-011（DOM）：首页/图谱/课题页主文案不泄露内部编号�
       assert.ok(!text.includes(banned), `${name} 主文案不应含内部词：${banned}`);
     }
   }
+});
+
+test('READING-016（DOM）：综述目录支持 20 篇、按关联文章去重并正确映射双端章节', () => {
+  const previousArticles = SURVEYS.articles;
+  const previousRelations = SURVEYS.relations;
+  try {
+    SURVEYS.articles = Array.from({ length: 20 }, (_, index) => ({
+      id: `fixture-r16-${String(index).padStart(2, '0')}`,
+      title: `Fixture Review ${index + 1}`,
+      displayTitle: index === 0
+        ? '合成验收综述 1：A bilingual long-title sample for natural wrapping across the directory'
+        : `合成验收综述 ${index + 1}`,
+      year: 2020 + index,
+      state: index >= 18 ? 'candidate' : 'partial',
+      shelfLead: `仅用于隔离渲染验收的样例条目 ${index + 1}，带有 longer English fixture summary to check wrapping；不是实际阅读进度。`,
+      scope: '合成数据，不代表真实研究内容。',
+      units: [{ id: `unit-${index}`, title: `第 ${index + 1} 篇的章节` }],
+    }));
+    const edge = (from, to, reason, fromUnitIds = [], toUnitIds = []) => ({
+      fromSurveyId: `fixture-r16-${String(from).padStart(2, '0')}`,
+      toSurveyId: `fixture-r16-${String(to).padStart(2, '0')}`,
+      displayLabel: '样例内容互补', origin: 'editorial', kind: 'complements', reason,
+      fromUnitIds, toUnitIds,
+    });
+    SURVEYS.relations = [
+      edge(0, 1, '同一对的第一条样例联系', ['unit-0'], ['unit-1']),
+      edge(0, 1, '同一对的第二条样例联系', ['unit-0'], ['unit-1']),
+      edge(2, 0, '反向记录的样例联系', ['unit-2'], ['unit-0']),
+      ...Array.from({ length: 7 }, (_, index) => edge(0, index + 3, `第 ${index + 3} 篇关联`, ['unit-0'], [`unit-${index + 3}`])),
+      edge(0, 10, '章节 ID 故意无效的隔离样例', ['fixture-missing-unit'], ['unit-10']),
+    ];
+
+    let view = renderAt('#/surveys');
+    assert.equal(collectByClass(view, 'survey-shelf-choice').length, 20, '所有样例文章可见，不依赖预设坐标');
+    assert.ok(view.textContent.includes('A bilingual long-title sample'), '长中英混排题名完整保留');
+    assert.equal(countTag(view, 'svg'), 0, '书架不再以固定画布表达全局关系');
+    const neighborSelect = collectByClass(view, 'survey-relation-select')[0];
+    assert.equal(neighborSelect.childNodes.length, 10, '关系选择器按 10 篇关联文章去重');
+    assert.equal(collectByClass(view, 'survey-relation-card').length, 2, '同一对的全部关系均展示');
+    assert.ok(collectLinks(view).includes('#/survey/fixture-r16-00/unit/unit-0'), '当前文章 from 端的章节链接保留');
+    assert.ok(collectLinks(view).includes('#/survey/fixture-r16-01/unit/unit-1'), '关联文章 to 端的章节链接保留');
+
+    neighborSelect.value = 'fixture-r16-02';
+    neighborSelect.listeners.change[0]();
+    const sides = collectByClass(view, 'survey-relation-side');
+    assert.ok(sides[0].textContent.includes('合成验收综述 1') && sides[0].textContent.includes('第 1 篇的章节'), '当前文章为 to 端时，自己的章节仍在当前侧');
+    assert.ok(sides[1].textContent.includes('合成验收综述 3') && sides[1].textContent.includes('第 3 篇的章节'), '反向关系另一侧映射到 from 文章章节');
+
+    neighborSelect.value = 'fixture-r16-10';
+    neighborSelect.listeners.change[0]();
+    assert.ok(view.textContent.includes('章节编号未能解析，暂不提供链接。'), '损坏章节编号如实说明且不生成坏链接');
+    assert.ok(!collectLinks(view).includes('#/survey/fixture-r16-00/unit/fixture-missing-unit'), '无效章节 ID 不生成路由链接');
+
+    const articleList = collectByClass(view, 'survey-shelf-list')[0];
+    const replaceChildren = articleList.replaceChildren;
+    articleList.replaceChildren = function (...children) {
+      replaceChildren.call(this, ...children);
+      this.childNodes.find = undefined; // 每次重绘后仍模拟 NodeList 的方法边界。
+    };
+    collectByClass(view, 'survey-relation-switch')[0].click();
+    const switched = collectByClass(view, 'survey-shelf-choice').find((button) => button.dataset.surveyId === 'fixture-r16-10');
+    assert.equal(switched.getAttribute('aria-pressed'), 'true', '切换关联综述时 NodeList 不需要 Array.find');
+    assert.equal(switched.focused, true, '切换后焦点回到实际选中的目录项');
+
+    const noRelation = collectByClass(view, 'survey-shelf-choice').find((button) => button.dataset.surveyId === 'fixture-r16-19');
+    noRelation.click();
+    assert.ok(view.textContent.includes('尚未整理与其他综述的联系'), '无关系文章不暗示学术上不存在联系');
+    const search = collectByClass(view, 'survey-shelf-search')[0];
+    search.value = 'fixture-r16-00'; search.listeners.input[0]();
+    assert.ok(view.textContent.includes('当前选中的综述不在搜索结果中'), '搜索不会静默改变当前选择');
+    clickFirst(view, (button) => button.className.split(/\s+/).includes('survey-shelf-clear-search')).click();
+    assert.equal(collectByClass(view, 'survey-shelf-choice').length, 20, '清除搜索恢复完整目录');
+  } finally {
+    SURVEYS.articles = previousArticles;
+    SURVEYS.relations = previousRelations;
+    renderAt('#/surveys');
+  }
+});
+
+test('READING-016（DOM）：任务预览分步复制，旧异步复制不会覆盖新版本', async () => {
+  const previousNavigator = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  let resolvePending;
+  let copiedText = '';
+  Object.defineProperty(globalThis, 'navigator', {
+    configurable: true,
+    value: { clipboard: { writeText(text) { copiedText = text; return new Promise((resolve) => { resolvePending = resolve; }); } } },
+  });
+  try {
+    const view = renderAt('#/surveys');
+    const request = collectByClass(view, 'survey-request-note')[0];
+    assert.equal(request.open, false, '任务表单默认收起');
+    request.open = true;
+    const input = collectByClass(view, 'survey-request-input')[0];
+    const form = collectByClass(view, 'survey-request-form')[0];
+    const submit = (event = { preventDefault() {} }) => form.listeners.submit[0](event);
+    input.value = '   '; input.listeners.input[0](); submit();
+    assert.ok(collectByClass(view, 'survey-request-validation')[0].textContent.includes('请先填写'), '空白输入不能生成');
+    input.value = '主题 A'; input.listeners.input[0](); submit();
+    let output = collectByClass(view, 'survey-request-output')[0];
+    assert.ok(output.value.includes('输入内容：主题 A') && output.value.includes('不要复制、上传私人 PDF'), '任务模板保留必要来源与隐私约束');
+    let copy = collectByClass(view, 'survey-request-copy')[0];
+    const pendingCopy = copy.listeners.click[0]();
+    assert.ok(copy.disabled, '同一版本复制中不可重复提交');
+
+    input.value = '主题 B'; input.listeners.input[0](); submit();
+    output = collectByClass(view, 'survey-request-output')[0];
+    assert.ok(output.value.includes('输入内容：主题 B'), '新版本预览为当前输入');
+    resolvePending(); await pendingCopy;
+    assert.ok(copiedText.includes('输入内容：主题 A'), '异步剪贴板接收的是点击时快照');
+    assert.ok(collectByClass(view, 'survey-request-clipboard-status')[0].textContent.includes('上一版'), '旧版本复制完成只提示实际写入的版本');
+    copy = collectByClass(view, 'survey-request-copy')[0];
+    assert.equal(copy.disabled, false, '旧 Promise 不会禁用新版本的复制');
+    assert.ok(output.value.includes('主题 B'), '旧 Promise 不会替换新预览');
+
+    input.value = '主题 C'; input.listeners.input[0](); submit();
+    globalThis.navigator.clipboard.writeText = async () => { throw new Error('clipboard denied'); };
+    copy = collectByClass(view, 'survey-request-copy')[0];
+    await copy.listeners.click[0]();
+    assert.ok(collectByClass(view, 'survey-request-clipboard-status')[0].textContent.includes('未能自动复制'), '复制拒绝时不报成功');
+    assert.ok(collectByClass(view, 'survey-request-select-text').length === 1, '复制拒绝时保留手动选中文本入口');
+    request.listeners.toggle[0]();
+    renderAt('#/home');
+    const returned = renderAt('#/surveys');
+    assert.equal(collectByClass(returned, 'survey-request-note')[0].open, true, '折叠状态在栏目往返中保留');
+    assert.equal(collectByClass(returned, 'survey-request-input')[0].value, '主题 C', '任务输入在栏目往返中保留');
+    assert.ok(collectByClass(returned, 'survey-request-output')[0].value.includes('输入内容：主题 C'), '有效预览在栏目往返中保留');
+  } finally {
+    if (previousNavigator) Object.defineProperty(globalThis, 'navigator', previousNavigator);
+    else delete globalThis.navigator;
+    renderAt('#/surveys');
+  }
+});
+
+test('READING-015 W1（DOM）：代表材料完整映射章节、原表、正文和可定位四层图', () => {
+  const hash = '#/material/mat-cross-harness-map';
+  const view = renderAt(hash);
+  const page = collectByClass(view, 'lib-reading-material')[0];
+  const sections = collectByClass(view, 'lib-reading-section');
+  const choices = collectByClass(view, 'lib-figure-choice');
+  const figureTable = collectByClass(view, 'lib-figure-table')[0];
+  assert.ok(page, '代表材料应采用正式阅读布局');
+  assert.equal(countTag(view, 'H1'), 1, '页面仅有一个主标题');
+  assert.deepEqual(sections.map((section) => section.dataset.readerSection), ['scene', 'mechanisms', 'budget', 'examples', 'takeaway']);
+  assert.equal(choices.length, 4, '阅读图应由四个真实表格行生成');
+  assert.ok(figureTable && !figureTable.open, '完整比较表默认收起');
+  assert.ok(collectByClass(figureTable, 'lib-table').length === 1, '展开内容应使用原比较表渲染');
+  const text = view.textContent;
+  for (const expected of [
+    '「跨工具」指不同 Agent 无法共享同一个 harness',
+    '接收方一次能看到的通信上下文是一个额度',
+    '换手的 Tax/Debt 两篇论文把这一小段做成了可对照的实验设置',
+    '待研究的不是「哪种格式最好」',
+    '以上两个组合是编辑为解释结构而构造的例子',
+    '输入预算与输出预算分开记',
+    '本次可以先跳过',
+  ]) assert.ok(text.includes(expected), '阅读页丢失原内容：' + expected + '；当前正文：' + text);
+
+  const transfer = choices.find((button) => button.dataset.rowKey === '传输');
+  transfer.click();
+  assert.equal(transfer.getAttribute('aria-pressed'), 'true', '选择状态须用 aria-pressed 表示');
+  assert.ok(collectByClass(page, 'lib-figure-selection-example')[0].textContent.includes('文件 / Git / 协议'));
+  assert.equal(window.location.hash, hash, '图中选择不应改写应用 hash');
+  const jump = collectByClass(page, 'lib-figure-jump')[0];
+  jump.click();
+  assert.equal(document.getElementById('lib-sec-mat-mat-cross-harness-map-examples').focused, true, '读这一段应定位并聚焦实际章节');
+  assert.equal(window.location.hash, hash, '章节定位不应新增历史项');
+});
+
+test('READING-015 W1（DOM）：字号/专注不重建正文或写存储，Escape 退出且离页清理监听', () => {
+  const view = renderAt('#/material/mat-cross-harness-map');
+  const page = collectByClass(view, 'lib-reading-material')[0];
+  const article = collectByClass(page, 'lib-article')[0];
+  const sizeButtons = collectByClass(page, 'lib-reader-size');
+  const focusButton = collectByClass(page, 'lib-reader-focus-button')[0];
+  const exitButton = collectByClass(page, 'lib-reader-focus-exit')[0];
+  storageCalls.length = 0;
+
+  sizeButtons.find((button) => button.dataset.readerSize === 'large').click();
+  assert.equal(page.dataset.readerSize, 'large', '字号选择应作用于当前页根节点');
+  assert.equal(collectByClass(page, 'lib-reader-size').find((button) => button.dataset.readerSize === 'large').getAttribute('aria-pressed'), 'true');
+  assert.equal(collectByClass(page, 'lib-article')[0], article, '字号切换不得重建正文 DOM');
+
+  focusButton.click();
+  assert.equal(page.classList.contains('is-reading-focus'), true, '专注模式应只切换页面状态');
+  assert.equal(exitButton.focused, true, '进入专注后焦点落在可见退出按钮');
+  let prevented = false;
+  for (const handler of [...(windowListeners.get('keydown') ?? [])]) {
+    handler({ key: 'Escape', preventDefault: () => { prevented = true; } });
+  }
+  assert.equal(prevented, true, 'Escape 应退出专注');
+  assert.equal(page.classList.contains('is-reading-focus'), false);
+  assert.equal(focusButton.focused, true, '退出后焦点返回原触发按钮');
+  assert.equal(storageCalls.some(([operation]) => ['setItem', 'removeItem'].includes(operation)), false, '显示设置不得写入个人记录');
+
+  renderAt('#/home');
+  assert.equal((windowListeners.get('keydown') ?? []).length, 0, '离开阅读页应移除临时 Escape 监听');
+  assert.equal((windowListeners.get('resize') ?? []).length, 0, '离开阅读页应移除概念图布局监听');
+});
+
+test('READING-015 W1（DOM）：窄屏专注退出时焦点回到可见的阅读设置摘要', () => {
+  const previousViewport = viewportWide;
+  viewportWide = true;
+  const view = renderAt('#/material/mat-cross-harness-map');
+  const page = collectByClass(view, 'lib-reading-material')[0];
+  const tools = collectByClass(page, 'lib-reader-tools')[0];
+  const summary = tools.childNodes[0];
+  const focusButton = collectByClass(page, 'lib-reader-focus-button')[0];
+  const exitButton = collectByClass(page, 'lib-reader-focus-exit')[0];
+  try {
+    focusButton.click();
+    assert.equal(exitButton.focused, true, '桌面进入专注后聚焦退出按钮');
+
+    viewportWide = false;
+    for (const handler of [...(windowListeners.get('resize') ?? [])]) handler();
+    assert.equal(tools.open, false, '切到窄屏后保留该窄屏的折叠状态');
+    exitButton.click();
+
+    assert.equal(page.classList.contains('is-reading-focus'), false, '退出按钮应返回普通阅读状态');
+    assert.equal(summary.focused, true, '折叠的窄屏设置中，焦点返回可见摘要');
+    assert.notEqual(focusButton.focused, true, '焦点不应落在折叠详情内的隐藏控件');
+  } finally {
+    viewportWide = previousViewport;
+    renderAt('#/home');
+  }
+});
+
+test('READING-015 W1（DOM）：字号切换锚定阅读线附近段落，不锚定屏幕边缘残段', () => {
+  const previousHeight = window.innerHeight;
+  const previousScrollY = window.scrollY;
+  const previousScrollBy = window.scrollBy;
+  const view = renderAt('#/material/mat-cross-harness-map');
+  const page = collectByClass(view, 'lib-reading-material')[0];
+  const paragraphs = collectByClass(page, 'lib-para').filter((paragraph) => paragraph.closest('.lib-reading-section'));
+  const scene = paragraphs.find((paragraph) => paragraph.textContent.includes('先把场景说清。'));
+  const mechanisms = paragraphs.find((paragraph) => paragraph.textContent.includes('机制是可组合的。'));
+  const representation = paragraphs.find((paragraph) => paragraph.textContent.includes('表示是机制内部的选择。'));
+  const budget = paragraphs.find((paragraph) => paragraph.textContent.includes('预算要记两本账。'));
+  assert.ok(scene && mechanisms && representation && budget, '锚点样本应来自代表材料的真实段落');
+  collectByClass(page, 'lib-reader-size').find((button) => button.dataset.readerSize === 'standard').click();
+  for (const paragraph of paragraphs) paragraph.isConnected = true;
+  scene.mockRect = { top: -124, bottom: 16, height: 140 };
+  mechanisms.mockRect = { top: 115, bottom: 185, height: 70 };
+  representation.mockRect = { top: 207, bottom: 313, height: 106 };
+  budget.mockRect = () => page.dataset.readerSize === 'large'
+    ? { top: 528, bottom: 762, height: 234 }
+    : { top: 412, bottom: 588, height: 176 };
+  window.innerHeight = 1000;
+  window.scrollY = 1098;
+  const scrollCalls = [];
+  window.scrollBy = (x, y) => scrollCalls.push([x, y]);
+  try {
+    const large = collectByClass(page, 'lib-reader-size').find((button) => button.dataset.readerSize === 'large');
+    large.click();
+    assert.equal(page.dataset.readerSize, 'large');
+    assert.equal(scrollCalls.length, 1, '字号切换应只校正一次文档滚动');
+    assert.ok(Math.abs(scrollCalls[0][1] - 116) < 1, `仅露出16px的上一段不应抢占阅读位置锚点：${JSON.stringify(scrollCalls)}`);
+  } finally {
+    if (previousHeight === undefined) delete window.innerHeight;
+    else window.innerHeight = previousHeight;
+    if (previousScrollY === undefined) delete window.scrollY;
+    else window.scrollY = previousScrollY;
+    if (previousScrollBy === undefined) delete window.scrollBy;
+    else window.scrollBy = previousScrollBy;
+    renderAt('#/home');
+  }
+});
+
+test('READING-015 W1（DOM）：目录可展开并聚焦来源 summary，减少动效时即时定位', () => {
+  const previousMotion = prefersReducedMotion;
+  prefersReducedMotion = true;
+  const view = renderAt('#/material/mat-cross-harness-map');
+  const page = collectByClass(view, 'lib-reading-material')[0];
+  const toc = collectByClass(page, 'lib-toc-link').find((button) => button.textContent === '来源与覆盖');
+  const coverage = collectByClass(page, 'lib-coverage')[0];
+  const summary = coverage.childNodes[0];
+  try {
+    assert.ok(toc && coverage && summary, '来源目录及其 summary 应存在');
+    assert.equal(summary.getAttribute('tabindex'), null, '原生 summary 应保留键盘顺序可达性');
+    toc.click();
+    assert.equal(coverage.open, true, '目录跳转应先展开来源详情');
+    assert.equal(summary.focused, true, '目录跳转应聚焦原生 summary');
+    assert.equal(coverage.scrollOptions.behavior, 'auto', '减少动效偏好应使用即时定位');
+  } finally {
+    prefersReducedMotion = previousMotion;
+    renderAt('#/home');
+  }
+});
+
+test('READING-015 W1（DOM）：阅读设置跨窄/宽视口切换可达并恢复窄屏折叠状态', () => {
+  const previousViewport = viewportWide;
+  viewportWide = false;
+  let view = renderAt('#/material/mat-cross-harness-map');
+  const page = collectByClass(view, 'lib-reading-material')[0];
+  const tools = collectByClass(page, 'lib-reader-tools')[0];
+  const resize = () => {
+    for (const handler of [...(windowListeners.get('resize') ?? [])]) handler();
+  };
+  try {
+    assert.equal(tools.open, false, '窄屏默认折叠阅读设置');
+    tools.open = true;
+    viewportWide = true;
+    resize();
+    assert.equal(tools.open, true, '切回桌面时目录和设置应保持可达');
+    viewportWide = false;
+    resize();
+    assert.equal(tools.open, true, '切回窄屏时恢复用户刚才的展开状态');
+    tools.open = false;
+    viewportWide = true;
+    resize();
+    assert.equal(tools.open, true, '桌面状态应展开目录和设置');
+    viewportWide = false;
+    resize();
+    assert.equal(tools.open, false, '窄屏恢复最近的手动折叠状态');
+  } finally {
+    viewportWide = previousViewport;
+    renderAt('#/home');
+  }
+});
+
+test('READING-015 W1（DOM）：自问在正文末尾，显式路线前后入口有真实上下文', () => {
+  const material = LIBRARY.materials.find((item) => item.id === 'mat-cross-harness-map');
+  const view = renderAt('#/material/mat-cross-harness-map?route=cross-harness-collab&track=start');
+  const page = collectByClass(view, 'lib-reading-material')[0];
+  const article = collectByClass(page, 'lib-article')[0];
+  const railHint = collectByClass(page, 'lib-reader-intent')[0];
+  const selfCheck = collectByClass(article, 'lib-material-self-check')[0];
+  const routeFooter = collectByClass(article, 'lib-material-route-footer')[0];
+  const text = article.textContent;
+  assert.ok(selfCheck && text.indexOf('读后自问') > text.indexOf('05 带着问题继续读'), '完整自问应排在五章正文之后');
+  assert.equal(selfCheck.textContent.includes(material.learner.intent), true, '文末完整保留 mastery intent');
+  assert.equal(railHint.textContent.includes(material.learner.intent), false, '辅助栏只保留简短入口');
+  assert.equal(text.split(material.learner.intent).length - 1, 1, '完整目标不重复占据侧栏');
+  assert.ok(routeFooter, '路线前后动作应位于正文文末');
+  assert.ok(collectLinks(routeFooter).includes('#/paper/beyond-frameworks?route=cross-harness-collab&track=start'), '下一步保留正确路线和 track');
+  assert.ok(collectLinks(routeFooter).includes('#/route/cross-harness-collab?section=start&step=step-collab-1'), '返回路线保留当前 step');
+  const rail = collectByClass(page, 'lib-material-rail')[0];
+  assert.equal(collectLinks(rail).some((href) => href.includes('route=cross-harness-collab') && href.startsWith('#/paper/')), false, '辅助栏不重复显示路线前后卡片');
+  railHint.click();
+  assert.equal(selfCheck.focused, true, '代表材料的辅助入口定位实际文末自问');
+  const direct = renderAt('#/material/mat-cross-harness-map');
+  assert.equal(collectByClass(direct, 'lib-material-route-footer').length, 0, '普通深链不猜测路线上下文');
+});
+
+test('READING-015 W1（DOM）：窄屏先读场景开篇，概念图随断点切换且读序同步 DOM', () => {
+  const previousViewport = viewportWide;
+  viewportWide = false;
+  let view = renderAt('#/material/mat-cross-harness-map');
+  let page = collectByClass(view, 'lib-reading-material')[0];
+  let article = collectByClass(page, 'lib-article')[0];
+  let figure = collectByClass(page, 'lib-reading-figure')[0];
+  let firstSection = collectByClass(page, 'lib-reading-section')[0];
+  assert.ok(article.childNodes.indexOf(firstSection) < article.childNodes.indexOf(figure), '窄屏 DOM 先呈现场景章节，再给出交互图');
+  assert.equal(window.location.hash, '#/material/mat-cross-harness-map', '重排不改路由');
+
+  viewportWide = true;
+  for (const handler of [...(windowListeners.get('resize') ?? [])]) handler();
+  assert.ok(article.childNodes.indexOf(figure) < article.childNodes.indexOf(firstSection), '桌面断点恢复图先于正文的设计读序');
+
+  view = renderAt('#/home');
+  page = collectByClass(view, 'lib-reading-material')[0];
+  assert.equal(page, undefined);
+  viewportWide = previousViewport;
+});
+
+test('READING-015 W1（DOM）：坏 readingLayout 完整回退原正文', () => {
+  const fixture = structuredClone(LIBRARY);
+  const material = fixture.materials.find((item) => item.id === 'mat-cross-harness-map');
+  material.readingLayout.figure.blockId = 'missing-comparison';
+  activeRenderer.__setRenderLibrary(fixture);
+  const originalWarn = console.warn;
+  console.warn = () => {};
+  let view;
+  try {
+    view = renderAt('#/material/mat-cross-harness-map');
+  } finally {
+    console.warn = originalWarn;
+    activeRenderer.__setRenderLibrary(LIBRARY);
+  }
+  assert.equal(collectByClass(view, 'lib-reading-figure').length, 0, '失效配置不得渲染半张图');
+  assert.ok(view.textContent.includes('先把场景说清。'), '回退保留正文首段');
+  assert.ok(view.textContent.includes('摘要 / 轨迹 / 交接包 / 快照'), '回退保留完整正文块');
+  assert.ok(view.textContent.includes('待研究的不是「哪种格式最好」'), '回退保留原 callout 标题');
+  assert.equal(collectByClass(view, 'lib-reader-intent').length, 0, '回退正文没有文末自问时不显示无目标的定位按钮');
+  assert.equal(view.textContent.split(material.learner.intent).length - 1, 1, '完整 intent 保留在原始正文中且不重复');
+
+  const defaultMaterial = LIBRARY.materials.find((item) => item.id === 'mat-read-empirical');
+  const defaultView = renderAt('#/material/mat-read-empirical');
+  assert.equal(collectByClass(defaultView, 'lib-reader-intent').length, 0, '缺省布局不伪造文末自问定位入口');
+  assert.equal(defaultView.textContent.split(defaultMaterial.learner.intent).length - 1, 1, '缺省布局完整保留原 intent');
 });
